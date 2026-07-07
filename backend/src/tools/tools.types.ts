@@ -6,7 +6,8 @@ export type ToolCategory =
   | 'browser'
   | 'memory'
   | 'rag'
-  | 'project';
+  | 'project'
+  | 'media';
 
 export type RiskLevel = 'low' | 'medium' | 'high' | 'critical';
 

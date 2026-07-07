@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../database/prisma.service';
 import { RetrievalService } from '../rag/retrieval.service';
 import { ContextConfigService } from './context.config';
+import { MediaService } from '../media/media.service';
 import { estimateTokenCount } from '../common/constants';
 import { SYSTEM_PROMPT } from '../llm/prompts/system.prompt';
 import { TOOL_USE_PROMPT } from '../llm/prompts/tool-use.prompt';
@@ -21,6 +22,7 @@ export class ContextService {
     private readonly retrieval: RetrievalService,
     private readonly contextConfig: ContextConfigService,
     private readonly config: ConfigService,
+    private readonly media: MediaService,
   ) {}
 
   async build(input: BuildContextInput): Promise<BuiltContext> {
@@ -107,6 +109,16 @@ export class ContextService {
         content: ragChunks.join('\n---\n'),
       });
       layersIncluded.push('rag');
+    }
+
+    // Media Context — imagens recentes da conversa
+    const mediaContext = await this.media.getConversationMediaContext(conversationId);
+    if (mediaContext) {
+      layers.push({
+        name: 'media',
+        content: mediaContext,
+      });
+      layersIncluded.push('media');
     }
 
     // 7. Resultados recentes de tools
@@ -232,6 +244,7 @@ export class ContextService {
       summary: 'Resumo da Conversa',
       memories: 'Memórias Relevantes',
       rag: 'Conhecimento do Projeto',
+      media: 'Contexto de Mídia (Imagens)',
       tool_results: 'Resultados Recentes de Tools',
     };
 

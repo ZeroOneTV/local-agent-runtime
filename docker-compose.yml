@@ -19,11 +19,19 @@ services:
         condition: service_healthy
       redis:
         condition: service_started
+      media-worker:
+        condition: service_healthy
+        required: false
+    environment:
+      # Hostname interno do Docker; sobrescreva em .env se necessário
+      - MEDIA_WORKER_URL=http://media-worker:5000
+      - MEDIA_STORAGE_ROOT=/storage/media
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:
       - local-ai-network
 
+  # UI legada Next.js — opcional; o frontend oficial é o Open WebUI (profile openwebui)
   frontend:
     build:
       context: ./frontend
@@ -42,6 +50,8 @@ services:
       - backend
     networks:
       - local-ai-network
+    profiles:
+      - frontend
 
   postgres:
     image: pgvector/pgvector:pg16
@@ -105,11 +115,46 @@ services:
       - ENABLE_SIGNUP=true
       - DEFAULT_MODELS=local-assistant
     depends_on:
-      - backend
+      backend:
+        condition: service_started
     networks:
       - local-ai-network
     profiles:
       - openwebui
+
+  media-worker:
+    build:
+      context: ./media-worker
+      dockerfile: Dockerfile
+    container_name: local-ai-media-worker
+    restart: unless-stopped
+    environment:
+      - STORAGE_ROOT=/storage/media
+      - MEDIA_ENABLE_VLM=false
+      - MEDIA_ENABLE_PADDLEOCR=false
+      - MEDIA_GENERATE_THUMBNAILS=true
+      - MEDIA_MAX_IMAGE_WIDTH=8000
+      - MEDIA_MAX_IMAGE_HEIGHT=8000
+    volumes:
+      - ./storage:/storage
+    ports:
+      - "${MEDIA_WORKER_PORT:-5000}:5000"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/health', timeout=3)",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    networks:
+      - local-ai-network
+    profiles:
+      - media
 
 volumes:
   postgres_data:

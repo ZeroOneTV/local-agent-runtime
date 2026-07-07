@@ -11,6 +11,7 @@ import { ConversationsModule } from '../conversations/conversations.module';
 import { FilesModule } from '../files/files.module';
 import { RagModule } from '../rag/rag.module';
 import { ToolsModule } from '../tools/tools.module';
+import { MediaModule } from '../media/media.module';
 
 @Module({
   imports: [
@@ -19,6 +20,7 @@ import { ToolsModule } from '../tools/tools.module';
     FilesModule,
     RagModule,
     ToolsModule,
+    MediaModule,
   ],
   controllers: [OpenAiCompatibleController, OpenWebuiFilesController, ApprovalsController],
   providers: [

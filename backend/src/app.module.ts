@@ -15,6 +15,7 @@ import { SecurityModule } from './security/security.module';
 import { OrchestratorModule } from './orchestrator/orchestrator.module';
 import { OpenWebuiModule } from './openwebui/openwebui.module';
 import { JobsModule } from './jobs/jobs.module';
+import { MediaModule } from './media/media.module';
 import { HealthController } from './health.controller';
 
 @Module({
@@ -42,6 +43,7 @@ import { HealthController } from './health.controller';
     OrchestratorModule,
     OpenWebuiModule,
     JobsModule,
+    MediaModule,
   ],
   controllers: [HealthController],
 })

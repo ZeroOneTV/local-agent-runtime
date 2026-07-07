@@ -5,13 +5,30 @@ dist/
 
 # Environment
 .env
+.env.local
+.env.*.local
 
-# Storage (keep structure, ignore contents)
+# Storage (keep structure, ignore runtime contents)
 storage/uploads/*
 storage/projects/*
 storage/generated/*
 storage/temp/*
+storage/media/images/originals/*
+storage/media/images/thumbnails/*
+storage/media/images/processed/*
+storage/media/images/contexts/*
 !storage/**/.gitkeep
+
+# Python (media-worker)
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+*.egg-info/
 
 # IDE
 .idea/
@@ -22,10 +39,11 @@ storage/temp/*
 .DS_Store
 Thumbs.db
 
-# Docker
+# Docker local bind mounts (named volumes are managed by Docker)
 postgres_data/
 redis_data/
 qdrant_data/
+open_webui_data/
 
 # Prisma
 backend/prisma/migrations/**/migration_lock.toml

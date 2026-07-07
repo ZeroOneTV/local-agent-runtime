@@ -16,7 +16,14 @@ export type OrchestratorEventType =
   | 'tool.completed'
   | 'tool.failed'
   | 'memory.suggested'
-  | 'memory.saved';
+  | 'memory.saved'
+  | 'media.uploaded'
+  | 'media.processing.started'
+  | 'media.processing.progress'
+  | 'media.processing.completed'
+  | 'media.processing.failed'
+  | 'media.indexing.pending_approval'
+  | 'media.indexed';
 
 @Injectable()
 export class EventService {

@@ -13,9 +13,10 @@ import { MemoryModule } from '../memory/memory.module';
 import { RagModule } from '../rag/rag.module';
 import { QueueModule } from '../queue/queue.module';
 import { SecurityModule } from '../security/security.module';
+import { MediaModule } from '../media/media.module';
 
 @Module({
-  imports: [MemoryModule, RagModule, QueueModule, SecurityModule],
+  imports: [MemoryModule, RagModule, QueueModule, SecurityModule, MediaModule],
   controllers: [ToolsController],
   providers: [
     PathGuardService,

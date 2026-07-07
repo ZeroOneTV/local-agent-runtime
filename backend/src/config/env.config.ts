@@ -66,6 +66,20 @@ export const envConfig = () => ({
     eventSystem: process.env.COGNITIVE_EVENT_SYSTEM !== 'false',
     debug: process.env.COGNITIVE_DEBUG === 'true',
   },
+  media: {
+    storageRoot: process.env.MEDIA_STORAGE_ROOT || '/storage/media',
+    workerUrl: process.env.MEDIA_WORKER_URL || 'http://media-worker:5000',
+    workerTimeoutMs: parseInt(process.env.MEDIA_WORKER_TIMEOUT_MS || '120000', 10),
+    maxFileBytes:
+      parseInt(process.env.MEDIA_MAX_IMAGE_SIZE_MB || '25', 10) * 1024 * 1024,
+    maxWidth: parseInt(process.env.MEDIA_MAX_IMAGE_WIDTH || '8000', 10),
+    maxHeight: parseInt(process.env.MEDIA_MAX_IMAGE_HEIGHT || '8000', 10),
+    enableVlm: process.env.MEDIA_ENABLE_VLM === 'true',
+    defaultProcessingMode: process.env.MEDIA_DEFAULT_PROCESSING_MODE || 'balanced',
+    waitForProcessingMs: parseInt(process.env.MEDIA_WAIT_FOR_PROCESSING_MS || '5000', 10),
+    requireIndexConfirmation: process.env.MEDIA_REQUIRE_CONFIRMATION_TO_INDEX !== 'false',
+    generateThumbnails: process.env.MEDIA_GENERATE_THUMBNAILS !== 'false',
+  },
   openwebui: {
     port: parseInt(process.env.OPENWEBUI_PORT || '3080', 10),
     apiKey: process.env.OPENWEBUI_API_KEY || 'local-dev-key',

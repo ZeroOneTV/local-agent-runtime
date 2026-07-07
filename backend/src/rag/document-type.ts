@@ -6,6 +6,7 @@ export type DocumentType =
   | 'yaml'
   | 'pdf'
   | 'image_ocr'
+  | 'image_context'
   | 'html'
   | 'unknown';
 
@@ -53,5 +54,6 @@ export const DOCUMENT_TYPE_PRIORITY_BOOST: Record<DocumentType, number> = {
   html: 0,
   pdf: -0.05,
   image_ocr: -0.1,
+  image_context: 0.05,
   unknown: -0.1,
 };

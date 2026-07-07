@@ -15,6 +15,7 @@ import { IndexingService } from '../rag/indexing.service';
 import { RetrievalService } from '../rag/retrieval.service';
 import { QueueService } from '../queue/queue.service';
 import { MemoryOrigin } from '../memory/memory.types';
+import { MediaService } from '../media/media.service';
 
 function schema(props: Record<string, JsonSchemaProperty>): Record<string, JsonSchemaProperty> {
   return props;
@@ -35,6 +36,7 @@ export class ToolRegistryService implements OnModuleInit {
     private readonly indexing: IndexingService,
     private readonly retrieval: RetrievalService,
     private readonly queue: QueueService,
+    private readonly media: MediaService,
   ) {}
 
   onModuleInit() {
@@ -461,6 +463,136 @@ export class ToolRegistryService implements OnModuleInit {
           10,
         );
         return { success: true, data: { memories } };
+      }),
+    );
+
+    // Media
+    this.register(
+      {
+        name: 'process_image',
+        description: 'Processa imagem (OCR, layout, resumo). Async por padrão.',
+        category: 'media',
+        kind: 'readonly',
+        riskLevel: 'low',
+        requiresApproval: false,
+        async: true,
+        inputSchema: schema({
+          mediaAssetId: { type: 'string', required: true },
+          mode: { type: 'string' },
+        }),
+        outputSchema: schema({
+          success: { type: 'string' },
+          mediaAssetId: { type: 'string' },
+          resultId: { type: 'string' },
+          summary: { type: 'string' },
+        }),
+      },
+      exec(async (a) => {
+        await this.media.enqueueProcessImage(
+          a.mediaAssetId as string,
+          a.mode as 'fast' | 'balanced' | 'full' | undefined,
+        );
+        const result = await this.media.getResult(a.mediaAssetId as string);
+        const dto = result.result as { semantic?: { summary?: string; tags?: string[] } } | null;
+        return {
+          success: true,
+          mediaAssetId: a.mediaAssetId,
+          resultId: result.asset.id,
+          summary: dto?.semantic?.summary ?? 'Processamento enfileirado',
+          tags: dto?.semantic?.tags ?? [],
+        };
+      }),
+    );
+
+    this.register(
+      {
+        name: 'search_media',
+        description: 'Busca imagens processadas por OCR, tags ou resumo.',
+        category: 'media',
+        kind: 'readonly',
+        riskLevel: 'low',
+        requiresApproval: false,
+        async: false,
+        inputSchema: schema({
+          query: { type: 'string', required: true },
+          scope: { type: 'string' },
+        }),
+        outputSchema: schema({ results: { type: 'string' } }),
+      },
+      exec(async (a, c) => {
+        const results = await this.media.searchMedia({
+          projectId: c.projectId,
+          query: a.query as string,
+          conversationId: c.conversationId,
+          scope: a.scope as 'conversation' | 'project' | 'conversation_or_project' | undefined,
+        });
+        return { success: true, data: { results } };
+      }),
+    );
+
+    this.register(
+      {
+        name: 'get_media_result',
+        description: 'Recupera resultado estruturado de uma imagem.',
+        category: 'media',
+        kind: 'readonly',
+        riskLevel: 'low',
+        requiresApproval: false,
+        async: false,
+        inputSchema: schema({
+          mediaAssetId: { type: 'string', required: true },
+        }),
+        outputSchema: schema({ result: { type: 'string' } }),
+      },
+      exec(async (a) => {
+        const data = await this.media.getResult(a.mediaAssetId as string);
+        return { success: true, data };
+      }),
+    );
+
+    this.register(
+      {
+        name: 'promote_media_to_project',
+        description: 'Promove análise de imagem para conhecimento do projeto.',
+        category: 'media',
+        kind: 'write',
+        riskLevel: 'medium',
+        requiresApproval: true,
+        async: false,
+        inputSchema: schema({
+          mediaAssetId: { type: 'string', required: true },
+          indexRag: { type: 'string' },
+          saveAsProjectAsset: { type: 'string' },
+        }),
+        outputSchema: schema({ promoted: { type: 'string' } }),
+      },
+      exec(async (a) => {
+        const result = await this.media.promoteToProject({
+          mediaAssetId: a.mediaAssetId as string,
+          indexRag: a.indexRag !== 'false',
+          saveAsProjectAsset: a.saveAsProjectAsset !== 'false',
+        });
+        return { success: true, data: result };
+      }),
+    );
+
+    this.register(
+      {
+        name: 'index_media_context',
+        description: 'Indexa image_context.md no RAG do projeto.',
+        category: 'media',
+        kind: 'write',
+        riskLevel: 'medium',
+        requiresApproval: true,
+        async: false,
+        inputSchema: schema({
+          mediaAssetId: { type: 'string', required: true },
+        }),
+        outputSchema: schema({ indexed: { type: 'string' } }),
+      },
+      exec(async (a) => {
+        const result = await this.media.indexMediaContext(a.mediaAssetId as string);
+        return { success: true, data: result };
       }),
     );
 
