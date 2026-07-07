@@ -68,19 +68,33 @@ export class EventService {
     return record.id;
   }
 
-  async findByConversation(conversationId: string, limit = 50) {
-    return this.prisma.orchestratorEvent.findMany({
-      where: { conversationId },
-      orderBy: { createdAt: 'desc' },
-      take: limit,
-    });
+  async findByConversation(
+    conversationId: string,
+    limit = 50,
+    offset = 0,
+  ) {
+    const [items, total] = await Promise.all([
+      this.prisma.orchestratorEvent.findMany({
+        where: { conversationId },
+        orderBy: { createdAt: 'desc' },
+        take: limit,
+        skip: offset,
+      }),
+      this.prisma.orchestratorEvent.count({ where: { conversationId } }),
+    ]);
+    return { items, total, limit, offset, hasMore: offset + items.length < total };
   }
 
-  async findByProject(projectId: string, limit = 50) {
-    return this.prisma.orchestratorEvent.findMany({
-      where: { projectId },
-      orderBy: { createdAt: 'desc' },
-      take: limit,
-    });
+  async findByProject(projectId: string, limit = 50, offset = 0) {
+    const [items, total] = await Promise.all([
+      this.prisma.orchestratorEvent.findMany({
+        where: { projectId },
+        orderBy: { createdAt: 'desc' },
+        take: limit,
+        skip: offset,
+      }),
+      this.prisma.orchestratorEvent.count({ where: { projectId } }),
+    ]);
+    return { items, total, limit, offset, hasMore: offset + items.length < total };
   }
 }

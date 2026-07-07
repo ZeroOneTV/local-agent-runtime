@@ -14,6 +14,9 @@ export interface ContextMetadata {
   ragChunksCount: number;
   toolResultsCount: number;
   recentMessagesCount: number;
+  truncatedForBudget?: boolean;
+  ragSkipped?: boolean;
+  deduplicated?: boolean;
 }
 
 export interface BuiltContext {

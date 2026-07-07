@@ -59,6 +59,8 @@ export class CognitiveOrchestratorService {
   ) {}
 
   async processMessage(input: ProcessMessageInput): Promise<OrchestratorResult> {
+    const startedAt = Date.now();
+    const timings: Record<string, number> = {};
     const eventIds: string[] = [];
     const cycles: ExecutionCycleResult[] = [];
     const pendingApprovals: OrchestratorResult['pendingApprovals'] = [];
@@ -66,6 +68,7 @@ export class CognitiveOrchestratorService {
     this.executionLoop.resetSession();
 
     const intent = this.intentAnalyzer.analyze(input.message);
+    timings.intentMs = Date.now() - startedAt;
     this.logger.log(`Intent: ${intent.intent}, flow: ${intent.flow}`);
 
     const taskStarted = await this.events.emit(
@@ -131,6 +134,7 @@ export class CognitiveOrchestratorService {
     }
 
     if (intent.needsTools && intent.flow !== 'direct') {
+      const toolsStarted = Date.now();
       let cycle = 1;
       let shouldContinue = true;
 
@@ -176,13 +180,16 @@ export class CognitiveOrchestratorService {
         if (!shouldContinue) break;
         cycle++;
       }
+      timings.toolsMs = Date.now() - toolsStarted;
     }
 
+    const contextStarted = Date.now();
     const built = await this.context.build({
       conversationId: input.conversationId,
       projectId: input.projectId,
       currentMessage: input.message,
     });
+    timings.contextMs = Date.now() - contextStarted;
 
     const systemParts = [built.systemContent, ASSISTED_EXECUTOR_PROMPT];
 
@@ -201,6 +208,7 @@ export class CognitiveOrchestratorService {
     }
 
     let response: { content: string; model: string };
+    const llmStarted = Date.now();
     try {
       response = await this.llm.chat(built.messages, systemParts.join('\n\n'));
     } catch {
@@ -209,6 +217,8 @@ export class CognitiveOrchestratorService {
         model: 'orchestrator-fallback',
       };
     }
+    timings.llmMs = Date.now() - llmStarted;
+    timings.totalMs = Date.now() - startedAt;
 
     let finalContent = response.content;
 
@@ -242,6 +252,12 @@ export class CognitiveOrchestratorService {
             cycles,
             contextLayers: built.metadata.layersIncluded,
             estimatedTokens: built.metadata.estimatedTokens,
+            memoriesCount: built.metadata.memoriesCount,
+            ragChunksCount: built.metadata.ragChunksCount,
+            toolResultsCount: built.metadata.toolResultsCount,
+            truncatedForBudget: built.metadata.truncatedForBudget,
+            ragSkipped: built.metadata.ragSkipped,
+            timingsMs: timings,
           }
         : undefined;
 

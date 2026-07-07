@@ -3,7 +3,9 @@ import { Logger } from '@nestjs/common';
 import { Job } from 'bullmq';
 import { JobRunnerService } from './job-runner.service';
 
-@Processor('orchestrator-jobs')
+@Processor('orchestrator-jobs', {
+  concurrency: parseInt(process.env.JOBS_ORCHESTRATOR_CONCURRENCY || '1', 10),
+})
 export class OrchestratorJobProcessor extends WorkerHost {
   private readonly logger = new Logger(OrchestratorJobProcessor.name);
 

@@ -16,7 +16,8 @@ import { OrchestratorModule } from './orchestrator/orchestrator.module';
 import { OpenWebuiModule } from './openwebui/openwebui.module';
 import { JobsModule } from './jobs/jobs.module';
 import { MediaModule } from './media/media.module';
-import { HealthController } from './health.controller';
+import { HealthModule } from './health/health.module';
+import { StorageModule } from './storage/storage.module';
 
 @Module({
   imports: [
@@ -44,7 +45,8 @@ import { HealthController } from './health.controller';
     OpenWebuiModule,
     JobsModule,
     MediaModule,
+    HealthModule,
+    StorageModule,
   ],
-  controllers: [HealthController],
 })
 export class AppModule {}

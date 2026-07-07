@@ -39,6 +39,10 @@ export class LlmService {
     ];
   }
 
+  private get timeoutMs(): number {
+    return this.config.get<number>('llm.timeoutMs') ?? 120000;
+  }
+
   async chat(
     messages: ChatMessage[],
     systemContent?: string,
@@ -48,6 +52,9 @@ export class LlmService {
       : this.buildPrompt(messages);
 
     try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
+
       const response = await fetch(`${this.baseUrl}/api/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -56,7 +63,9 @@ export class LlmService {
           messages: prompt,
           stream: false,
         }),
+        signal: controller.signal,
       });
+      clearTimeout(timeout);
 
       if (!response.ok) {
         const errorText = await response.text();

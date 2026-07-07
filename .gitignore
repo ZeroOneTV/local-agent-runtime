@@ -17,6 +17,7 @@ storage/media/images/originals/*
 storage/media/images/thumbnails/*
 storage/media/images/processed/*
 storage/media/images/contexts/*
+storage/artifacts/*
 !storage/**/.gitkeep
 
 # Python (media-worker)

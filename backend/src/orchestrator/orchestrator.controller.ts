@@ -69,10 +69,12 @@ export class OrchestratorController {
   eventsByConversation(
     @Param('conversationId') conversationId: string,
     @Query('limit') limit?: string,
+    @Query('offset') offset?: string,
   ) {
     return this.events.findByConversation(
       conversationId,
       limit ? parseInt(limit, 10) : 50,
+      offset ? parseInt(offset, 10) : 0,
     );
   }
 
@@ -80,8 +82,13 @@ export class OrchestratorController {
   eventsByProject(
     @Param('projectId') projectId: string,
     @Query('limit') limit?: string,
+    @Query('offset') offset?: string,
   ) {
-    return this.events.findByProject(projectId, limit ? parseInt(limit, 10) : 50);
+    return this.events.findByProject(
+      projectId,
+      limit ? parseInt(limit, 10) : 50,
+      offset ? parseInt(offset, 10) : 0,
+    );
   }
 }
 

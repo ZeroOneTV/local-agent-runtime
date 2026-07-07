@@ -5,6 +5,8 @@ export const envConfig = () => ({
     provider: process.env.LLM_PROVIDER || 'ollama',
     baseUrl: process.env.LLM_BASE_URL || 'http://host.docker.internal:11434',
     model: process.env.LLM_MODEL || 'qwen3:14b',
+    timeoutMs: parseInt(process.env.LLM_TIMEOUT_MS || '120000', 10),
+    streaming: process.env.LLM_STREAMING !== 'false',
   },
   database: {
     url: process.env.DATABASE_URL,
@@ -21,6 +23,9 @@ export const envConfig = () => ({
     uploads: process.env.UPLOADS_PATH || '/storage/uploads',
     projects: process.env.PROJECTS_PATH || '/storage/projects',
     temp: process.env.TEMP_PATH || '/storage/temp',
+    artifacts: process.env.ARTIFACTS_PATH || '/storage/artifacts',
+    tempMaxAgeHours: parseInt(process.env.STORAGE_TEMP_MAX_AGE_HOURS || '24', 10),
+    artifactMaxAgeDays: parseInt(process.env.STORAGE_ARTIFACT_MAX_AGE_DAYS || '30', 10),
   },
   security: {
     toolExecutionMode: process.env.TOOL_EXECUTION_MODE || 'approval_required',
@@ -39,12 +44,21 @@ export const envConfig = () => ({
   },
   context: {
     recentMessagesWindow: parseInt(process.env.CONTEXT_RECENT_MESSAGES || '15', 10),
+    maxRecentTokens: parseInt(process.env.CONTEXT_MAX_RECENT_TOKENS || '3000', 10),
     summaryMessageThreshold: parseInt(process.env.CONTEXT_SUMMARY_MESSAGE_THRESHOLD || '20', 10),
     summaryTokenThreshold: parseInt(process.env.CONTEXT_SUMMARY_TOKEN_THRESHOLD || '4000', 10),
     memoryLimit: parseInt(process.env.CONTEXT_MEMORY_LIMIT || '5', 10),
     ragChunkLimit: parseInt(process.env.CONTEXT_RAG_CHUNK_LIMIT || '5', 10),
     recentToolResultsLimit: parseInt(process.env.CONTEXT_TOOL_RESULTS_LIMIT || '5', 10),
     highImportanceThreshold: parseInt(process.env.CONTEXT_HIGH_IMPORTANCE_THRESHOLD || '4', 10),
+    skipRagForCasual: process.env.CONTEXT_SKIP_RAG_CASUAL !== 'false',
+  },
+  jobs: {
+    orchestratorConcurrency: parseInt(process.env.JOBS_ORCHESTRATOR_CONCURRENCY || '1', 10),
+    indexingConcurrency: parseInt(process.env.JOBS_INDEXING_CONCURRENCY || '1', 10),
+    embeddingsConcurrency: parseInt(process.env.JOBS_EMBEDDINGS_CONCURRENCY || '1', 10),
+    mediaConcurrency: parseInt(process.env.JOBS_MEDIA_CONCURRENCY || '1', 10),
+    toolsConcurrency: parseInt(process.env.JOBS_TOOLS_CONCURRENCY || '2', 10),
   },
   rag: {
     embeddingModel: process.env.EMBEDDING_MODEL || 'nomic-embed-text',
@@ -79,6 +93,7 @@ export const envConfig = () => ({
     waitForProcessingMs: parseInt(process.env.MEDIA_WAIT_FOR_PROCESSING_MS || '5000', 10),
     requireIndexConfirmation: process.env.MEDIA_REQUIRE_CONFIRMATION_TO_INDEX !== 'false',
     generateThumbnails: process.env.MEDIA_GENERATE_THUMBNAILS !== 'false',
+    workerConcurrency: parseInt(process.env.MEDIA_WORKER_CONCURRENCY || '1', 10),
   },
   openwebui: {
     port: parseInt(process.env.OPENWEBUI_PORT || '3080', 10),

@@ -4,7 +4,9 @@ import { Job } from 'bullmq';
 import { MediaProcessingService } from './media-processing.service';
 import { ProcessingMode } from './media.types';
 
-@Processor('media-processing')
+@Processor('media-processing', {
+  concurrency: parseInt(process.env.JOBS_MEDIA_CONCURRENCY || '1', 10),
+})
 export class MediaProcessingProcessor extends WorkerHost {
   private readonly logger = new Logger(MediaProcessingProcessor.name);
 

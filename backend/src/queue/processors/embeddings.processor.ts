@@ -4,7 +4,9 @@ import { Job } from 'bullmq';
 import { MemoryService } from '../../memory/memory.service';
 import { MemoryOrigin } from '../../memory/memory.types';
 
-@Processor('embeddings')
+@Processor('embeddings', {
+  concurrency: parseInt(process.env.JOBS_EMBEDDINGS_CONCURRENCY || '1', 10),
+})
 export class EmbeddingsProcessor extends WorkerHost {
   private readonly logger = new Logger(EmbeddingsProcessor.name);
 

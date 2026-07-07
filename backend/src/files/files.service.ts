@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { PrismaService } from '../database/prisma.service';
+import { parsePagination, toPaginated } from '../common/pagination';
 
 @Injectable()
 export class FilesService {
@@ -40,14 +41,26 @@ export class FilesService {
     });
   }
 
-  async listByProject(projectId: string) {
-    return this.prisma.file.findMany({
-      where: { projectId, deletedAt: null },
-      orderBy: { lastModified: 'desc' },
-      include: {
-        _count: { select: { chunks: true } },
-      },
-    });
+  async listByProject(
+    projectId: string,
+    limit?: string | number,
+    offset?: string | number,
+  ) {
+    const { limit: take, offset: skip } = parsePagination(limit, offset);
+
+    const where = { projectId, deletedAt: null };
+    const [items, total] = await Promise.all([
+      this.prisma.file.findMany({
+        where,
+        orderBy: { lastModified: 'desc' },
+        include: { _count: { select: { chunks: true } } },
+        take,
+        skip,
+      }),
+      this.prisma.file.count({ where }),
+    ]);
+
+    return toPaginated(items, total, take, skip);
   }
 
   async findOne(id: string) {

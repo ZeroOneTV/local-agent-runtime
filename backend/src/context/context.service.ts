@@ -14,6 +14,12 @@ import {
   ContextMetadata,
 } from './context.types';
 import { ChatMessage } from '../llm/llm.service';
+import {
+  deduplicateLines,
+  filterDuplicateMemories,
+  shouldSearchRag,
+} from './context-dedup.util';
+import { trimLayersToTokenBudget, trimMessagesToTokenBudget } from './context-budget.util';
 
 @Injectable()
 export class ContextService {
@@ -51,26 +57,22 @@ export class ContextService {
 
     const layers: ContextLayer[] = [];
     const layersIncluded: string[] = [];
+    let deduplicated = false;
+    let ragSkipped = false;
 
-    // 1. Instruções do sistema
     layers.push({
       name: 'system',
       content: [SYSTEM_PROMPT, TOOL_USE_PROMPT].join('\n\n'),
     });
     layersIncluded.push('system');
 
-    // 2. Configuração do projeto
-    const projectLayer = await this.buildProjectLayer(
-      project,
-      settings,
-      projectId,
-    );
+    const projectLayer = await this.buildProjectLayer(project, settings, projectId);
+
     if (projectLayer) {
       layers.push({ name: 'project', content: projectLayer });
       layersIncluded.push('project');
     }
 
-    // 3. Resumo da conversa
     const latestSummary = conversation.summaries[0];
     const summaryUsed = !!latestSummary;
     if (latestSummary) {
@@ -81,12 +83,14 @@ export class ContextService {
       layersIncluded.push('summary');
     }
 
-    // 5. Memórias relevantes (consulta baseada na mensagem atual)
-    const memories = await this.retrieval.searchRelevantMemories(
+    const rawMemories = await this.retrieval.searchRelevantMemories(
       projectId,
       currentMessage,
       this.contextConfig.memoryLimit,
     );
+    const memories = filterDuplicateMemories(projectLayer || '', rawMemories);
+    if (memories.length < rawMemories.length) deduplicated = true;
+
     if (memories.length) {
       layers.push({
         name: 'memories',
@@ -97,31 +101,38 @@ export class ContextService {
       layersIncluded.push('memories');
     }
 
-    // 6. Conhecimento do projeto (RAG)
-    const ragChunks = await this.retrieval.searchRelevantChunks(
-      projectId,
-      currentMessage,
-      this.contextConfig.ragChunkLimit,
-    );
-    if (ragChunks.length) {
-      layers.push({
-        name: 'rag',
-        content: ragChunks.join('\n---\n'),
-      });
-      layersIncluded.push('rag');
+    const useRag =
+      !this.contextConfig.skipRagForCasual || shouldSearchRag(currentMessage);
+    let ragChunks: string[] = [];
+    if (useRag) {
+      ragChunks = await this.retrieval.searchRelevantChunks(
+        projectId,
+        currentMessage,
+        this.contextConfig.ragChunkLimit,
+      );
+    } else {
+      ragSkipped = true;
     }
 
-    // Media Context — imagens recentes da conversa
+    if (ragChunks.length) {
+      let ragContent = ragChunks.join('\n---\n');
+      if (latestSummary) {
+        const deduped = deduplicateLines(latestSummary.summary, ragContent);
+        if (deduped.length < ragContent.length) deduplicated = true;
+        ragContent = deduped;
+      }
+      if (ragContent.trim()) {
+        layers.push({ name: 'rag', content: ragContent });
+        layersIncluded.push('rag');
+      }
+    }
+
     const mediaContext = await this.media.getConversationMediaContext(conversationId);
     if (mediaContext) {
-      layers.push({
-        name: 'media',
-        content: mediaContext,
-      });
+      layers.push({ name: 'media', content: mediaContext });
       layersIncluded.push('media');
     }
 
-    // 7. Resultados recentes de tools
     const maxToolOutput =
       this.config.get<number>('tools.maxOutputChars') ?? 4000;
     const toolResultsLayer = this.buildToolResultsLayer(
@@ -133,34 +144,91 @@ export class ContextService {
       layersIncluded.push('tool_results');
     }
 
-    const systemContent = this.formatSystemContent(layers);
+    const budgetTrim = trimLayersToTokenBudget(
+      layers,
+      this.contextConfig.maxContextTokens,
+    );
+    const finalLayers = budgetTrim.layers;
+    let truncatedForBudget = budgetTrim.truncated;
+    if (budgetTrim.truncated) {
+      layersIncluded.splice(0, layersIncluded.length, ...finalLayers.map((l) => l.name));
+    }
 
-    // 4. Histórico recente (janela deslizante, excluindo mensagem atual)
-    const recentMessages = this.buildRecentHistory(
+    const systemContent = this.formatSystemContent(finalLayers);
+
+    let recentMessages = this.buildRecentHistory(
       conversation.messages,
       latestSummary?.generatedUntilMessageId ?? null,
       currentMessage,
     );
     layersIncluded.push('recent_history');
 
-    // 8. Mensagem atual
+    const recentTrim = trimMessagesToTokenBudget(
+      recentMessages,
+      this.contextConfig.maxRecentTokens,
+    );
+    recentMessages = recentTrim.messages;
+    if (recentTrim.truncated) truncatedForBudget = true;
+
     const messages: ChatMessage[] = [
       ...recentMessages,
       { role: 'user', content: currentMessage },
     ];
 
+    const totalTokens = estimateTokenCount(
+      systemContent + messages.map((m) => m.content).join(''),
+    );
+    if (totalTokens > this.contextConfig.maxContextTokens) {
+      const msgTrim = trimMessagesToTokenBudget(
+        messages.slice(0, -1),
+        Math.floor(this.contextConfig.maxContextTokens * 0.3),
+      );
+      const rebuilt: ChatMessage[] = [
+        ...msgTrim.messages,
+        { role: 'user', content: currentMessage },
+      ];
+      truncatedForBudget = true;
+      return this.finalize(
+        systemContent,
+        rebuilt,
+        {
+          layersIncluded,
+          estimatedTokens: estimateTokenCount(
+            systemContent + rebuilt.map((m) => m.content).join(''),
+          ),
+          summaryUsed,
+          memoriesCount: memories.length,
+          ragChunksCount: ragChunks.length,
+          toolResultsCount: conversation.toolCalls.filter((t) => t.result).length,
+          recentMessagesCount: msgTrim.messages.length,
+          truncatedForBudget,
+          ragSkipped,
+          deduplicated,
+        },
+      );
+    }
+
     const metadata: ContextMetadata = {
       layersIncluded,
-      estimatedTokens: estimateTokenCount(
-        systemContent + messages.map((m) => m.content).join(''),
-      ),
+      estimatedTokens: totalTokens,
       summaryUsed,
       memoriesCount: memories.length,
       ragChunksCount: ragChunks.length,
       toolResultsCount: conversation.toolCalls.filter((t) => t.result).length,
       recentMessagesCount: recentMessages.length,
+      truncatedForBudget: truncatedForBudget || undefined,
+      ragSkipped: ragSkipped || undefined,
+      deduplicated: deduplicated || undefined,
     };
 
+    return { systemContent, messages, metadata };
+  }
+
+  private finalize(
+    systemContent: string,
+    messages: ChatMessage[],
+    metadata: ContextMetadata,
+  ): BuiltContext {
     return { systemContent, messages, metadata };
   }
 
@@ -218,7 +286,7 @@ export class ContextService {
     toolCalls: {
       toolName: string;
       parameters: unknown;
-      result: { output: string; success: boolean } | null;
+      result: { output: string; success: boolean; artifactPath?: string | null } | null;
     }[],
     maxOutputChars: number,
   ): string | null {
@@ -232,7 +300,10 @@ export class ContextService {
         if (output.length > maxOutputChars) {
           output = output.slice(0, maxOutputChars) + '\n...[truncado]';
         }
-        return `Tool: ${t.toolName}(${JSON.stringify(t.parameters)})\nResultado (${status}):\n${output}`;
+        const artifactNote = t.result!.artifactPath
+          ? `\n(artifact completo: ${t.result!.artifactPath})`
+          : '';
+        return `Tool: ${t.toolName}(${JSON.stringify(t.parameters)})\nResultado (${status}):\n${output}${artifactNote}`;
       })
       .join('\n\n');
   }
@@ -272,7 +343,6 @@ export class ContextService {
       }
     }
 
-    // Remove a mensagem atual (última user) para não duplicar
     if (
       eligible.length > 0 &&
       eligible[eligible.length - 1].role === 'user' &&
@@ -282,7 +352,15 @@ export class ContextService {
     }
 
     const window = this.contextConfig.recentMessagesWindow;
-    const recent = eligible.slice(-window);
+    let recent = eligible.slice(-window);
+
+    const maxRecentTokens = this.contextConfig.maxRecentTokens;
+    while (
+      recent.length > 1 &&
+      estimateTokenCount(recent.map((m) => m.content).join('')) > maxRecentTokens
+    ) {
+      recent = recent.slice(1);
+    }
 
     return recent
       .filter((m) => ['user', 'assistant', 'system', 'tool'].includes(m.role))

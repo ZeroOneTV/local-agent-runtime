@@ -9,10 +9,12 @@ export class SecurityController {
   auditByProject(
     @Param('projectId') projectId: string,
     @Query('limit') limit?: string,
+    @Query('offset') offset?: string,
   ) {
     return this.audit.findByProject(
       projectId,
       limit ? parseInt(limit, 10) : 50,
+      offset ? parseInt(offset, 10) : 0,
     );
   }
 
@@ -20,10 +22,12 @@ export class SecurityController {
   auditByConversation(
     @Param('conversationId') conversationId: string,
     @Query('limit') limit?: string,
+    @Query('offset') offset?: string,
   ) {
     return this.audit.findByConversation(
       conversationId,
       limit ? parseInt(limit, 10) : 50,
+      offset ? parseInt(offset, 10) : 0,
     );
   }
 }

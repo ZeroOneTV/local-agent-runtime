@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service';
+import { parsePagination, toPaginated } from '../common/pagination';
 import {
   MemoryOrigin,
   VALID_MEMORY_ORIGINS,
@@ -33,11 +34,21 @@ export class MemoryService {
 
   constructor(private readonly prisma: PrismaService) {}
 
-  async findByProject(projectId: string) {
-    return this.prisma.memory.findMany({
-      where: { projectId, active: true },
-      orderBy: [{ importance: 'desc' }, { updatedAt: 'desc' }],
-    });
+  async findByProject(projectId: string, limit?: string | number, offset?: string | number) {
+    const { limit: take, offset: skip } = parsePagination(limit, offset);
+
+    const where = { projectId, active: true };
+    const [items, total] = await Promise.all([
+      this.prisma.memory.findMany({
+        where,
+        orderBy: [{ importance: 'desc' }, { updatedAt: 'desc' }],
+        take,
+        skip,
+      }),
+      this.prisma.memory.count({ where }),
+    ]);
+
+    return toPaginated(items, total, take, skip);
   }
 
   async findOne(id: string) {

@@ -3,7 +3,9 @@ import { Logger } from '@nestjs/common';
 import { Job } from 'bullmq';
 import { IndexingService } from '../../rag/indexing.service';
 
-@Processor('file-index')
+@Processor('file-index', {
+  concurrency: parseInt(process.env.JOBS_INDEXING_CONCURRENCY || '1', 10),
+})
 export class FileIndexProcessor extends WorkerHost {
   private readonly logger = new Logger(FileIndexProcessor.name);
 

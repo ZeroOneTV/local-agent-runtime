@@ -32,4 +32,16 @@ export class ContextConfigService {
   get highImportanceThreshold(): number {
     return this.config.get<number>('context.highImportanceThreshold') ?? 4;
   }
+
+  get maxRecentTokens(): number {
+    return this.config.get<number>('context.maxRecentTokens') ?? 3000;
+  }
+
+  get maxContextTokens(): number {
+    return this.config.get<number>('security.maxContextTokens') ?? 24000;
+  }
+
+  get skipRagForCasual(): boolean {
+    return this.config.get<boolean>('context.skipRagForCasual') ?? true;
+  }
 }

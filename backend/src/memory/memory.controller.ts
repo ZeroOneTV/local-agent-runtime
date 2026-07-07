@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, Post } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, Query } from '@nestjs/common';
 import { MemoryService } from './memory.service';
 import { MemoryOrigin } from './memory.types';
 
@@ -7,8 +7,12 @@ export class MemoryController {
   constructor(private readonly memories: MemoryService) {}
 
   @Get('project/:projectId')
-  findByProject(@Param('projectId') projectId: string) {
-    return this.memories.findByProject(projectId);
+  findByProject(
+    @Param('projectId') projectId: string,
+    @Query('limit') limit?: string,
+    @Query('offset') offset?: string,
+  ) {
+    return this.memories.findByProject(projectId, limit, offset);
   }
 
   @Get(':id')

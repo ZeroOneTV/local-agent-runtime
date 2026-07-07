@@ -7,12 +7,14 @@ import {
   ToolCallStatus,
   truncateToolOutput,
 } from './tools.types';
+import { ArtifactsService } from '../storage/artifacts.service';
 
 @Injectable()
 export class ToolExecutionService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
+    private readonly artifacts: ArtifactsService,
   ) {}
 
   async createCall(
@@ -44,12 +46,19 @@ export class ToolExecutionService {
     executionTimeMs: number,
   ) {
     const maxChars = this.config.get<number>('tools.maxOutputChars') ?? 4000;
+    const fullJson = JSON.stringify(result, null, 2);
     const output = truncateToolOutput(result, maxChars);
+
+    let artifactPath: string | undefined;
+    if (fullJson.length > maxChars) {
+      artifactPath = await this.artifacts.saveToolOutput(toolCallId, fullJson);
+    }
 
     await this.prisma.toolResult.create({
       data: {
         toolCallId,
         output,
+        artifactPath,
         executionTime: executionTimeMs,
         success: result.success,
       },
