@@ -1,0 +1,35 @@
+# Dependencies
+node_modules/
+.next/
+dist/
+
+# Environment
+.env
+
+# Storage (keep structure, ignore contents)
+storage/uploads/*
+storage/projects/*
+storage/generated/*
+storage/temp/*
+!storage/**/.gitkeep
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+postgres_data/
+redis_data/
+qdrant_data/
+
+# Prisma
+backend/prisma/migrations/**/migration_lock.toml
+
+# Logs
+*.log
+npm-debug.log*
