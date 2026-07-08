@@ -35,8 +35,13 @@ model Project {
   conversations Conversation[]
   files         File[]
   memories      Memory[]
-  jobs          Job[]
-  mediaAssets   MediaAsset[]
+  jobs                 Job[]
+  mediaAssets          MediaAsset[]
+  recentMemoryItems    RecentMemoryItem[]
+  deepMemoryItems      DeepMemoryItem[]
+  archiveItems         ArchiveItem[]
+  memoryAccessLogs     MemoryAccessLog[]
+  memoryPortabilityRecords MemoryPortabilityRecord[]
 
   @@map("projects")
 }
@@ -138,15 +143,20 @@ model Embedding {
 }
 
 model Memory {
-  id         String   @id @default(uuid()) @db.Uuid
-  projectId  String   @map("project_id") @db.Uuid
-  title      String
-  content    String
-  importance Int      @default(3)
-  origin     String   @default("user_confirmation")
-  active     Boolean  @default(true)
-  createdAt  DateTime @default(now()) @map("created_at")
-  updatedAt  DateTime @updatedAt @map("updated_at")
+  id             String    @id @default(uuid()) @db.Uuid
+  projectId      String    @map("project_id") @db.Uuid
+  title          String
+  content        String
+  importance     Int       @default(3)
+  origin         String    @default("user_confirmation")
+  active         Boolean   @default(true)
+  confidence     Float     @default(1)
+  sourceType     String?   @map("source_type")
+  sourceRef      String?   @map("source_ref")
+  lastAccessedAt DateTime? @map("last_accessed_at")
+  accessCount    Int       @default(0) @map("access_count")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
 
   project Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
   history MemoryHistory[]
@@ -154,6 +164,125 @@ model Memory {
   @@index([projectId])
   @@index([active])
   @@map("memories")
+}
+
+model RecentMemoryItem {
+  id                 String    @id @default(uuid()) @db.Uuid
+  projectId          String    @map("project_id") @db.Uuid
+  conversationId     String?   @map("conversation_id") @db.Uuid
+  title              String
+  content            String
+  summary            String?
+  sourceType         String    @map("source_type")
+  sourceRef          String?   @map("source_ref")
+  importance         Int       @default(3)
+  confidence         Float     @default(0.7)
+  status             String    @default("active")
+  expiresAt          DateTime? @map("expires_at")
+  promotedToMemoryId String?   @map("promoted_to_memory_id") @db.Uuid
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @updatedAt @map("updated_at")
+  lastAccessedAt     DateTime? @map("last_accessed_at")
+  accessCount        Int       @default(0) @map("access_count")
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+  @@index([conversationId])
+  @@index([status])
+  @@index([expiresAt])
+  @@map("recent_memory_items")
+}
+
+model DeepMemoryItem {
+  id               String    @id @default(uuid()) @db.Uuid
+  projectId        String    @map("project_id") @db.Uuid
+  title            String
+  summary          String?
+  contentPreview   String?   @map("content_preview")
+  sourceType       String    @map("source_type")
+  sourceRef        String?   @map("source_ref")
+  artifactPath     String?   @map("artifact_path")
+  contextPath      String?   @map("context_path")
+  documentType     String?   @map("document_type")
+  tags             String[]  @default([])
+  entities         Json?
+  embeddingStatus  String    @default("not_indexed") @map("embedding_status")
+  embeddingModel   String?   @map("embedding_model")
+  chunkConfigHash  String?   @map("chunk_config_hash")
+  importance       Int       @default(2)
+  confidence       Float     @default(0.6)
+  createdAt        DateTime  @default(now()) @map("created_at")
+  lastAccessedAt   DateTime? @map("last_accessed_at")
+  accessCount      Int       @default(0) @map("access_count")
+  archivedAt       DateTime? @map("archived_at")
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+  @@index([embeddingStatus])
+  @@index([archivedAt])
+  @@map("deep_memory_items")
+}
+
+model ArchiveItem {
+  id          String    @id @default(uuid()) @db.Uuid
+  projectId   String    @map("project_id") @db.Uuid
+  archiveType String    @map("archive_type")
+  title       String
+  summary     String?
+  storagePath String    @map("storage_path")
+  manifestRef String?   @map("manifest_ref")
+  checksum    String?
+  sizeBytes   Int?      @map("size_bytes")
+  compressed  Boolean   @default(false)
+  createdAt   DateTime  @default(now()) @map("created_at")
+  restoredAt  DateTime? @map("restored_at")
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+  @@index([archiveType])
+  @@map("archive_items")
+}
+
+model MemoryAccessLog {
+  id             String   @id @default(uuid()) @db.Uuid
+  projectId      String   @map("project_id") @db.Uuid
+  conversationId String?  @map("conversation_id") @db.Uuid
+  memoryLayer    String   @map("memory_layer")
+  memoryRefId    String   @map("memory_ref_id") @db.Uuid
+  query          String?
+  score          Float?
+  reason         String?
+  accessedAt     DateTime @default(now()) @map("accessed_at")
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+  @@index([memoryLayer])
+  @@map("memory_access_logs")
+}
+
+model MemoryPortabilityRecord {
+  id          String    @id @default(uuid()) @db.Uuid
+  projectId   String?   @map("project_id") @db.Uuid
+  recordType  String    @map("record_type")
+  profile     String?
+  status      String    @default("pending")
+  filePath    String?   @map("file_path")
+  manifest    Json?
+  report      Json?
+  error       Json?
+  createdAt   DateTime  @default(now()) @map("created_at")
+  completedAt DateTime? @map("completed_at")
+
+  project Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+
+  @@index([projectId])
+  @@index([recordType])
+  @@index([status])
+  @@map("memory_portability_records")
 }
 
 model MemoryHistory {

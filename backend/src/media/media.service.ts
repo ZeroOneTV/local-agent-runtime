@@ -17,6 +17,7 @@ import { MediaConfigService } from './media.config';
 import {
   ImageProcessingResultDto,
   ProcessingMode,
+  ProcessCapabilitiesDto,
   isImageFilename,
   isImageMime,
 } from './media.types';
@@ -89,20 +90,37 @@ export class MediaService {
     return asset;
   }
 
-  async enqueueProcessImage(mediaAssetId: string, mode?: ProcessingMode) {
+  async enqueueProcessImage(
+    mediaAssetId: string,
+    mode?: ProcessingMode,
+    capabilities?: ProcessCapabilitiesDto,
+    enableVlm?: boolean,
+  ) {
     await this.queue.add(
       'process_image',
-      { mediaAssetId, mode },
+      { mediaAssetId, mode, capabilities, enableVlm },
       { jobId: `media-${mediaAssetId}-${Date.now()}`, removeOnComplete: 50 },
     );
     return { queued: true, mediaAssetId };
   }
 
-  async processImageSync(mediaAssetId: string, mode?: ProcessingMode) {
-    return this.processing.runProcessImage({ mediaAssetId, mode });
+  async processImageSync(
+    mediaAssetId: string,
+    mode?: ProcessingMode,
+    capabilities?: ProcessCapabilitiesDto,
+    enableVlm?: boolean,
+  ) {
+    return this.processing.runProcessImage({ mediaAssetId, mode, capabilities, enableVlm });
   }
 
-  async getResult(mediaAssetId: string) {
+  async getResult(
+    mediaAssetId: string,
+    options?: {
+      includeRawJson?: boolean;
+      includeMarkdown?: boolean;
+      includeBlocks?: boolean;
+    },
+  ) {
     const asset = await this.prisma.mediaAsset.findUnique({
       where: { id: mediaAssetId },
       include: {
@@ -113,6 +131,36 @@ export class MediaService {
     if (!asset) throw new NotFoundException('Media asset não encontrado');
 
     const latest = asset.processingResults[0];
+    const raw = latest?.resultJson as ImageProcessingResultDto | null;
+    const includeRaw = options?.includeRawJson !== false;
+    const includeBlocks = options?.includeBlocks === true;
+
+    let result: Partial<ImageProcessingResultDto> | null = raw;
+    if (raw && !includeRaw) {
+      result = {
+        mediaId: raw.mediaId,
+        imageType: raw.imageType,
+        processingMode: raw.processingMode,
+        providers: raw.providers,
+        semantic: raw.semantic,
+        warnings: raw.warnings,
+        performance: raw.performance,
+      };
+    }
+    if (raw && !includeBlocks && result) {
+      result = {
+        ...result,
+        ocr: { ...raw.ocr, blocks: [] },
+        layout: { ...raw.layout, blocks: [] },
+      };
+    }
+
+    let markdown: string | null = null;
+    if (options?.includeMarkdown && latest?.contextMarkdownPath) {
+      const fs = await import('fs/promises');
+      markdown = await fs.readFile(latest.contextMarkdownPath, 'utf-8').catch(() => null);
+    }
+
     return {
       asset: {
         id: asset.id,
@@ -123,8 +171,9 @@ export class MediaService {
         thumbnailPath: asset.thumbnailPath,
         hash: asset.hash,
       },
-      result: latest?.resultJson ?? null,
+      result,
       contextMarkdownPath: latest?.contextMarkdownPath ?? null,
+      contextMarkdown: markdown,
       tags: asset.tags.map((t) => t.tag),
     };
   }

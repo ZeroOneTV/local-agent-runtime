@@ -1,13 +1,16 @@
 import { NestFactory } from '@nestjs/core';
-import { ValidationPipe } from '@nestjs/common';
+import { ValidationPipe, Logger } from '@nestjs/common';
 import { AppModule } from './app.module';
+import { getAppRole } from './runtime/app-role.util';
 
 async function bootstrap() {
+  const logger = new Logger('Bootstrap');
+  logger.log(`APP_ROLE=${getAppRole()}`);
+
   const app = await NestFactory.create(AppModule);
 
   app.enableCors({
     origin: [
-      'http://localhost:3000',
       'http://localhost:3080',
       process.env.OPENWEBUI_URL || 'http://localhost:3080',
     ],

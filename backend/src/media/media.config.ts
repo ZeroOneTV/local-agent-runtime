@@ -14,11 +14,13 @@ export class MediaConfigService {
   }
 
   get workerTimeoutMs(): number {
-    return this.config.get<number>('media.workerTimeoutMs') ?? 120000;
+    return this.config.get<number>('media.processingTimeoutMs') ??
+      this.config.get<number>('media.workerTimeoutMs') ??
+      180000;
   }
 
   get maxFileBytes(): number {
-    return this.config.get<number>('media.maxFileBytes') ?? 20 * 1024 * 1024;
+    return this.config.get<number>('media.maxFileBytes') ?? 25 * 1024 * 1024;
   }
 
   get maxWidth(): number {
@@ -43,5 +45,32 @@ export class MediaConfigService {
 
   get requireIndexConfirmation(): boolean {
     return this.config.get<boolean>('media.requireIndexConfirmation') ?? true;
+  }
+
+  get ocrPrimary(): string {
+    return this.config.get<string>('media.ocrPrimary') || 'paddleocr';
+  }
+
+  get enablePaddleOcr(): boolean {
+    return this.config.get<boolean>('media.enablePaddleOcr') ?? true;
+  }
+
+  get enablePpStructure(): boolean {
+    return this.config.get<boolean>('media.enablePpStructure') ?? true;
+  }
+
+  get enableDocling(): boolean {
+    return this.config.get<boolean>('media.enableDocling') ?? true;
+  }
+
+  /** Fingerprint used for cache invalidation when provider config changes */
+  buildProviderFingerprint(mode: string): Record<string, string> {
+    return {
+      mode,
+      ocr: this.enablePaddleOcr ? this.ocrPrimary : 'tesseract',
+      layout: this.enablePpStructure ? 'pp-structure' : 'heuristic-ocr',
+      document: this.enableDocling ? 'docling' : 'disabled',
+      vision: this.enableVlm ? this.config.get<string>('media.vlmProvider') || 'ollama' : 'disabled',
+    };
   }
 }

@@ -1,8 +1,6 @@
 import { Module } from '@nestjs/common';
 import { BullModule } from '@nestjs/bullmq';
 import { QueueService } from './queue.service';
-import { FileIndexProcessor } from './processors/file-index.processor';
-import { EmbeddingsProcessor } from './processors/embeddings.processor';
 import { RagModule } from '../rag/rag.module';
 import { MemoryModule } from '../memory/memory.module';
 
@@ -15,7 +13,7 @@ import { MemoryModule } from '../memory/memory.module';
     RagModule,
     MemoryModule,
   ],
-  providers: [QueueService, FileIndexProcessor, EmbeddingsProcessor],
+  providers: [QueueService],
   exports: [QueueService],
 })
 export class QueueModule {}

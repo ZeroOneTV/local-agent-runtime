@@ -9,7 +9,16 @@
     "start:prod": "node dist/main",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
-    "prisma:deploy": "prisma migrate deploy"
+    "prisma:deploy": "prisma migrate deploy",
+    "memory:export": "ts-node scripts/memory-export.ts",
+    "memory:import": "ts-node scripts/memory-import.ts",
+    "memory:backup": "ts-node scripts/memory-backup.ts",
+    "memory:validate": "ts-node scripts/memory-validate.ts",
+    "worker:all": "ts-node src/worker-main.ts",
+    "worker:orchestrator": "APP_ROLE=worker-orchestrator ts-node src/worker-main.ts",
+    "worker:indexing": "APP_ROLE=worker-indexing ts-node src/worker-main.ts",
+    "worker:embeddings": "APP_ROLE=worker-embeddings ts-node src/worker-main.ts",
+    "worker:memory": "APP_ROLE=worker-memory ts-node src/worker-main.ts"
   },
   "prisma": {
     "seed": "ts-node prisma/seed.ts"
@@ -22,6 +31,8 @@
     "@nestjs/platform-express": "^10.4.15",
     "@prisma/client": "^6.1.0",
     "bullmq": "^5.34.3",
+    "adm-zip": "^0.5.16",
+    "ioredis": "^5.4.2",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.1",
     "reflect-metadata": "^0.2.2",
@@ -31,6 +42,7 @@
     "@nestjs/cli": "^10.4.9",
     "@nestjs/schematics": "^10.2.3",
     "@types/express": "^5.0.0",
+    "@types/adm-zip": "^0.5.7",
     "@types/node": "^22.10.2",
     "prisma": "^6.1.0",
     "ts-node": "^10.9.2",

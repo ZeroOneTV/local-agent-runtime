@@ -2,9 +2,9 @@
 
 ## Arquitetura
 
-- O frontend oficial é o **Open WebUI**, conectado ao backend via API OpenAI-compatible (`/v1`).
+- O **Open WebUI** é a interface de chat, conectada ao backend via API OpenAI-compatible (`/v1`).
 - O **backend NestJS** é a fonte única de contexto, memória, RAG, tools e segurança.
-- A **LLM local** (Ollama) nunca é acessada diretamente pelo frontend.
+- A **LLM local** (Ollama) nunca é acessada diretamente pelo Open WebUI.
 
 ## Identificadores
 

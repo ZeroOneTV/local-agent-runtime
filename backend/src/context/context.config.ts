@@ -22,7 +22,11 @@ export class ContextConfigService {
   }
 
   get ragChunkLimit(): number {
-    return this.config.get<number>('context.ragChunkLimit') ?? 5;
+    return (
+      this.config.get<number>('performance.ragTopK') ??
+      this.config.get<number>('context.ragChunkLimit') ??
+      5
+    );
   }
 
   get recentToolResultsLimit(): number {

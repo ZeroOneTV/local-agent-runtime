@@ -15,7 +15,7 @@ docker compose exec -T backend npx prisma migrate deploy 2>/dev/null || \
 
 echo ""
 echo "Stack pronta!"
-echo "  Frontend: http://localhost:3000"
-echo "  Backend:  http://localhost:3001/health"
-echo "  Postgres: localhost:5432"
-echo "  Redis:    localhost:6379"
+echo "  Backend:    http://localhost:3001/health"
+echo "  Open WebUI: ./scripts/openwebui-up.sh (http://localhost:3080)"
+echo "  Postgres:   localhost:5432"
+echo "  Redis:      localhost:6379"

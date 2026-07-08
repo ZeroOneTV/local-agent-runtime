@@ -39,4 +39,19 @@ export class HealthController {
     const result = await this.health.checkStorage();
     return { service: 'storage', ...result };
   }
+
+  @Get('queues')
+  checkQueues() {
+    return this.health.checkQueues();
+  }
+
+  @Get('workers')
+  checkWorkers() {
+    return this.health.checkWorkers();
+  }
+
+  @Get('resources')
+  checkResources() {
+    return this.health.checkResources();
+  }
 }

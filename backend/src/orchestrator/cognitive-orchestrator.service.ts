@@ -12,6 +12,8 @@ import { MemoryDecisionService } from './memory-decision.service';
 import { EventService } from './event.service';
 import { OrchestratorConfigService } from './orchestrator.config';
 import { JobsService } from '../jobs/jobs.service';
+import { WorkingMemoryService } from '../memory-stratification/working-memory.service';
+import { MemoryEtlService } from '../memory-stratification/memory-etl.service';
 import {
   ExecutionCycleResult,
   OrchestratorPlan,
@@ -56,6 +58,8 @@ export class CognitiveOrchestratorService {
     private readonly config: OrchestratorConfigService,
     @Inject(forwardRef(() => JobsService))
     private readonly jobs: JobsService,
+    private readonly workingMemory: WorkingMemoryService,
+    private readonly memoryEtl: MemoryEtlService,
   ) {}
 
   async processMessage(input: ProcessMessageInput): Promise<OrchestratorResult> {
@@ -78,6 +82,13 @@ export class CognitiveOrchestratorService {
       { intent: intent.intent, flow: intent.flow },
     );
     if (taskStarted) eventIds.push(taskStarted);
+
+    await this.workingMemory.updateConversation(input.conversationId, {
+      currentGoal: input.message.slice(0, 200),
+    });
+    await this.events.emit('memory.working.updated', input.projectId, input.conversationId, {
+      currentGoal: input.message.slice(0, 200),
+    });
 
     let plan: OrchestratorPlan | undefined;
     let jobId: string | undefined;
@@ -228,6 +239,7 @@ export class CognitiveOrchestratorService {
     );
 
     for (const suggestion of memorySuggestions) {
+      await this.events.emit('memory.consolidation.suggested', input.projectId, input.conversationId, suggestion);
       await this.events.emit('memory.suggested', input.projectId, input.conversationId, suggestion);
       if (this.config.requireMemoryConfirmation) {
         finalContent += `\n\n---\n${this.memoryDecision.formatSuggestionMessage(suggestion)}`;
@@ -235,6 +247,22 @@ export class CognitiveOrchestratorService {
     }
 
     await this.summary.updateIfNeeded(input.conversationId);
+
+    const recent = await this.memoryEtl.extractFromConversationTurn({
+      projectId: input.projectId,
+      conversationId: input.conversationId,
+      userMessage: input.message,
+      assistantResponse: finalContent,
+      toolSummaries: cycles.flatMap((c) =>
+        c.toolResults.map((t) => `${t.tool}: ${t.summary.slice(0, 120)}`),
+      ),
+    });
+    if (recent) {
+      await this.events.emit('memory.recent.created', input.projectId, input.conversationId, {
+        id: recent.id,
+        title: recent.title,
+      });
+    }
 
     const completedEvent = await this.events.emit(
       'task.completed',
@@ -257,7 +285,17 @@ export class CognitiveOrchestratorService {
             toolResultsCount: built.metadata.toolResultsCount,
             truncatedForBudget: built.metadata.truncatedForBudget,
             ragSkipped: built.metadata.ragSkipped,
-            timingsMs: timings,
+            deepMemorySkipped: built.metadata.deepMemorySkipped,
+            timingsMs: {
+              ...timings,
+              memoryMs: built.metadata.memoryMs,
+              ragMs: built.metadata.ragMs,
+            },
+            context: {
+              tokensEstimated: built.metadata.estimatedTokens,
+              ragSkipped: built.metadata.ragSkipped,
+              deepMemorySkipped: built.metadata.deepMemorySkipped,
+            },
           }
         : undefined;
 

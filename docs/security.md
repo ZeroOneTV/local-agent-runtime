@@ -20,7 +20,7 @@ Tools de arquivo só acessam caminhos dentro de `PROJECTS_PATH` (`/storage/proje
 
 ## Aprovação humana
 
-Quando `TOOL_EXECUTION_MODE=approval_required`, tool calls de shell retornam status pendente até o frontend enviar `approved: true`.
+Quando `TOOL_EXECUTION_MODE=approval_required`, tool calls sensíveis ficam pendentes até aprovação via Open WebUI, API ou `/approvals`.
 
 ## Próximos passos
 

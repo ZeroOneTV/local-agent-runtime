@@ -10,15 +10,15 @@ Ideal para quem quer um assistente estilo ChatGPT/Claude, mas rodando na própri
 
 | Você obtém | Como funciona |
 |------------|---------------|
-| Chat com interface familiar | [Open WebUI](https://github.com/open-webui/open-webui) como frontend |
+| Chat com interface familiar | [Open WebUI](https://github.com/open-webui/open-webui) como interface de chat |
 | Respostas contextualizadas | O backend monta contexto em camadas antes de chamar a LLM |
 | Conhecimento do seu projeto | RAG indexa documentos e código; memórias guardam decisões permanentes |
-| Análise de imagens | OCR, layout e resumo semântico via worker Python; contexto injetado no chat |
+| Análise de imagens | OCR, layout, parsing documental e VLM opcional via worker Python |
 | Ações no projeto | Tools leem arquivos, inspecionam estrutura, consultam Git etc. |
 | Segurança por padrão | Tools sensíveis exigem aprovação; tudo é auditado |
-| Tarefas demoradas | Jobs longos rodam em background (indexação, análise, reindexação) |
+| Memória em camadas e portabilidade | Working/recent/deep no Redis+Postgres; export/import ZIP entre máquinas |
 
-**Regra central:** o frontend **nunca** fala direto com o Ollama. Toda mensagem passa pelo backend, que decide o que fazer antes de chamar o modelo.
+**Regra central:** o Open WebUI **nunca** fala direto com o Ollama. Toda mensagem passa pelo backend, que decide o que fazer antes de chamar o modelo.
 
 ```text
 Open WebUI  →  Backend (/v1)  →  Orquestrador  →  Contexto / RAG / Mídia / Tools  →  LLM local
@@ -28,17 +28,17 @@ Open WebUI  →  Backend (/v1)  →  Orquestrador  →  Contexto / RAG / Mídia 
 
 ## Por que não conectar o chat direto à LLM?
 
-Se o Open WebUI (ou qualquer frontend) conversar direto com o Ollama, você perde:
+Se o Open WebUI conversar direto com o Ollama, você perde:
 
-- Montagem inteligente de contexto
-- Memória e RAG do projeto
+- Montagem inteligente de contexto com limite de tokens
+- Memória permanente e RAG do projeto
 - Processamento estruturado de imagens (OCR, layout, `image_context.md`)
 - Execução controlada de ferramentas
 - Aprovação humana para ações perigosas
 - Auditoria e logs de segurança
 - Jobs longos e eventos de progresso
 
-Este projeto existe para ser um **runtime de assistente cognitivo**, não apenas um proxy de chat.
+Este projeto é um **runtime de assistente cognitivo**, não um proxy de chat.
 
 ---
 
@@ -47,21 +47,26 @@ Este projeto existe para ser um **runtime de assistente cognitivo**, não apenas
 ```text
 ┌──────────────────────────────────────────────────────────────────────┐
 │  Windows / Linux (host)                                              │
-│  ┌──────────────────┐                                                │
-│  │ Ollama (nativo)  │  http://localhost:11434                        │
-│  └────────▲─────────┘                                                │
+│  ┌──────────────────┐   ┌──────────────────┐                          │
+│  │ Ollama (nativo)  │   │ VLM nativo       │  (opcional, via HTTP)  │
+│  │ :11434           │   │ qwen2.5vl etc.   │                          │
+│  └────────▲─────────┘   └────────▲─────────┘                          │
 │           │ host.docker.internal                                     │
 │  ┌────────┴──────────────────────────────────────────────────────┐   │
 │  │ Docker Compose                                                 │   │
 │  │                                                                │   │
 │  │  Open WebUI :3080 ──► Backend NestJS :3001                     │   │
 │  │                            │                                   │   │
+│  │         Cognitive Orchestrator                               │   │
 │  │              ┌─────────────┼─────────────┐                     │   │
 │  │              ▼             ▼             ▼                     │   │
-│  │         PostgreSQL     Redis        storage/                   │   │
-│  │         + pgvector    + BullMQ      (uploads, media, projects) │   │
+│  │         Context Engine  Tools/Security  Jobs (BullMQ)          │   │
+│  │              │             │             │                     │   │
+│  │              ▼             ▼             ▼                     │   │
+│  │         PostgreSQL     Redis         storage/                  │   │
+│  │         + pgvector      (working)     (uploads, media, memory) │   │
 │  │                                                                │   │
-│  │  media-worker :5000  ◄── OCR / thumbnails (profile media)     │   │
+│  │  media-worker :5000  ◄── providers OCR/layout/VLM (profile)   │   │
 │  └────────────────────────────────────────────────────────────────┘   │
 └──────────────────────────────────────────────────────────────────────┘
 ```
@@ -70,107 +75,320 @@ Este projeto existe para ser um **runtime de assistente cognitivo**, não apenas
 
 | Componente | Função | Porta |
 |------------|--------|-------|
-| **Open WebUI** | Interface de chat (recomendado) | 3080 |
+| **Open WebUI** | Interface de chat | 3080 |
 | **Backend NestJS** | Orquestrador, API, tools, RAG, mídia, segurança | 3001 |
 | **PostgreSQL + pgvector** | Dados, embeddings, histórico oficial | 5432 |
 | **Redis + BullMQ** | Filas e jobs assíncronos | 6379 |
 | **Ollama** | LLM local (fora do Docker) | 11434 |
-| **Media Worker** | OCR, thumbnails e JSON estruturado de imagens (opcional) | 5000 |
-| **Frontend Next.js** | UI legada (opcional, profile `frontend`) | 3000 |
+| **Media Worker** | Pipeline de imagens com providers (profile `media`) | 5000 |
 | **Qdrant** | Vetores alternativos (opcional, profile `qdrant`) | 6333 |
+
+### Stack técnica
+
+- **Backend:** NestJS, Prisma, BullMQ
+- **Banco:** PostgreSQL + pgvector (embeddings)
+- **Interface:** Open WebUI via API OpenAI-compatible (`/v1`)
+- **LLM:** Ollama nativo no host (melhor uso de GPU)
+- **Mídia:** Worker Python separado (backend orquestra, worker executa)
 
 ---
 
-## Fluxo de uma mensagem
+## Fluxo operacional
+
+### Mensagem de chat
 
 Exemplo: *"Analise a estrutura deste projeto e diga se a arquitetura está coerente."*
 
-1. **Usuário** envia mensagem no Open WebUI.
-2. **Open WebUI** chama `POST /v1/chat/completions` no backend (API compatível com OpenAI).
-3. **Backend** identifica o projeto (via modelo lógico ou API key) e salva a mensagem.
-4. **Orquestrador cognitivo** classifica a intenção (ex.: discussão de arquitetura).
-5. **Planner** monta um plano de etapas, se necessário.
-6. **Execution loop** executa tools read-only automaticamente (`inspect_structure`, `detect_stack`, `search_rag`…).
-7. **Context Engine** monta o prompt em camadas:
-   - instruções do sistema
-   - configuração do projeto
-   - resumo da conversa
-   - histórico recente
-   - memórias relevantes
-   - chunks RAG
-   - contexto de mídia (imagens recentes da conversa)
-   - resultados de tools
-   - mensagem atual
-8. **LLM local** gera a resposta (ou o backend usa fallback se o Ollama estiver off).
-9. **Backend** salva a resposta, sugere memórias se aplicável, emite eventos e devolve ao Open WebUI.
+1. Usuário envia mensagem no Open WebUI.
+2. Open WebUI chama `POST /v1/chat/completions` no backend.
+3. Backend identifica o **projeto** (modelo lógico ou API key) e persiste a mensagem.
+4. **Orquestrador cognitivo** analisa intenção (`intent`) e decide o fluxo:
+   - resposta direta
+   - tools read-only automáticas
+   - job longo em background
+5. **Planner** monta plano de etapas quando necessário.
+6. **Execution loop** executa tools read-only (`inspect_structure`, `search_rag`, etc.).
+7. **Context Engine** monta o prompt final (ver seção abaixo).
+8. **LLM local** gera resposta (ou fallback técnico se Ollama estiver off).
+9. Backend salva resposta, sugere memórias, emite eventos e retorna ao Open WebUI.
 
-### Upload de imagens
+### Upload de imagem
 
-Quando o usuário envia uma imagem via `POST /v1/files`:
-
-1. O backend detecta o MIME/extensão e **não** indexa como texto.
-2. Salva o original em `storage/media/images/originals/`.
-3. Enfileira job `process_image` na fila `media-processing`.
-4. O **media-worker** (Python) executa OCR, gera thumbnail e retorna JSON estruturado.
-5. O backend persiste resultados, gera `image_context.md` e injeta resumo no Context Engine.
-6. A imagem **não entra no RAG automaticamente** — o usuário promove via tool ou aprovação.
+1. `POST /v1/files` detecta MIME/extensão de imagem — **não** indexa como texto.
+2. Backend cria `media_asset` e enfileira job `process_image`.
+3. **media-worker** executa pipeline (OCR, layout, etc.) e retorna JSON estruturado.
+4. Backend persiste blocos OCR/layout/tags, gera `image_context.md`.
+5. **Context Engine** injeta resumo na conversa atual.
+6. Imagem **não entra no RAG automaticamente** — requer `promote_media_to_project` ou aprovação.
 
 ### Tools sensíveis
 
-Ações como `write_file`, `apply_patch`, `promote_media_to_project` ou `index_media_context` criam uma solicitação `pending`. O usuário aprova via chat, API ou página `/approvals`.
+`write_file`, `apply_patch`, `run_command`, `promote_media_to_project` e similares criam `tool_call` com status `pending`. Aprovação via chat, API ou `/approvals`.
 
-### Tarefas longas
+### Jobs longos
 
-Pedidos como *"indexe todo o projeto"* criam um **job** em background. O worker processa, emite eventos de progresso e conclui com resultado persistido.
+Pedidos como *"indexe todo o projeto"* criam job BullMQ (`orchestrator-jobs`). O chat não bloqueia; eventos reportam progresso.
+
+---
+
+## Context Engine
+
+O prompt enviado à LLM é montado em **camadas**, com budget de tokens e deduplicação:
+
+```text
+1. Instruções do sistema
+2. Configuração do projeto (root_path, memórias de alta importância)
+3. Memória de trabalho (Redis — objetivo/plano/job ativo)
+4. Memória recente (Postgres — fatos recentes)
+5. Resumo da conversa (quando existir)
+6. Memórias consolidadas (busca por similaridade/importância)
+7. RAG (chunks vetoriais — pulado em mensagens casuais curtas)
+8. Media Context (imagens recentes da conversa)
+9. Memória profunda (somente quando a query indica histórico)
+10. Resultados recentes de tools (truncados)
+11. Mensagem atual do usuário
+```
+
+Variáveis relevantes: `CONTEXT_RECENT_MESSAGES`, `CONTEXT_MAX_RECENT_TOKENS`, `MAX_CONTEXT_TOKENS`, `CONTEXT_RAG_CHUNK_LIMIT`, `MEMORY_RETRIEVAL_*`.
+
+---
+
+## Orquestrador cognitivo
+
+Responsável por decidir **quando** usar LLM, tools, RAG, jobs e memória.
+
+| Fluxo | Quando |
+|-------|--------|
+| `direct` | Pergunta simples, contexto já suficiente |
+| `assisted_executor` | Tools read-only + LLM (padrão) |
+| `long_job` | Indexação, análise pesada, reindexação |
+
+Em modo debug (`COGNITIVE_DEBUG=true` ou `debug: true` no `/orchestrator/chat`), retorna tempos por etapa, camadas usadas e tokens estimados.
+
+---
+
+## RAG e memória
+
+### RAG (Retrieval-Augmented Generation)
+
+- Indexação incremental por **hash** — arquivos inalterados não são reprocessados.
+- Chunks com embeddings em pgvector (ou Qdrant, profile `qdrant`).
+- Tipos de documento: `code`, `markdown`, `text`, `image_context`, etc.
+- Busca vetorial injetada na camada RAG do Context Engine.
+
+### Memórias permanentes
+
+- Decisões duradouras, convenções, preferências do projeto.
+- Confirmação obrigatória antes de salvar (`COGNITIVE_REQUIRE_MEMORY_CONFIRMATION`).
+- Alta importância aparece também na camada de projeto.
+
+### Memória em camadas
+
+| Camada | Onde | TTL / decay |
+|--------|------|-------------|
+| **Working** | Redis | 72h (conversa), 7d (projeto) |
+| **Recent** | `recent_memory_items` | 30d → deep |
+| **Consolidated** | `memories` | permanente |
+| **Deep** | `deep_memory_items` + storage | busca sob demanda; 180d → archive |
+| **Cold Archive** | `storage/archive/` | restauração manual |
+
+Portabilidade: export ZIP (`minimal` / `portable` / `full`) com manifest + checksums; import com `new_project`, `merge` ou `replace`; reembedding automático se o modelo de embedding mudar.
+
+---
+
+## Sistema de tools
+
+### Read-only (automáticas)
+
+`read_file`, `list_directory`, `search_files`, `inspect_structure`, `detect_stack`, `search_rag`, `search_memories`, `git_status`, `git_diff`, `search_media`, `get_media_result`, `process_image`
+
+### Exigem aprovação
+
+`write_file`, `apply_patch`, `delete_file`, `run_command`, `run_tests`, `run_build`, `promote_media_to_project`, `index_media_context`
+
+Toda execução passa por **Permission Engine**, **Policy Engine** e **Audit Logs** (`tool_audit_logs`).
+
+Outputs grandes são truncados no contexto; versão completa salva em `storage/artifacts/`.
+
+---
+
+## Pipeline de imagens (media-worker)
+
+### Arquitetura de providers
+
+```text
+media-worker/
+├── ImageProcessor
+│   ├── Metadata + Thumbnail (webp)
+│   ├── ImageClassifier (heurísticas)
+│   ├── OCRRouter          → PaddleOCR (principal) / Tesseract (fallback)
+│   ├── LayoutRouter       → PP-Structure / heurística OCR
+│   ├── DocumentRouter     → Docling (modo full, documentos)
+│   └── VisionRouter       → Ollama VLM via HTTP (opcional)
+└── SemanticAssembler      → result_json + tags + performance
+```
+
+### Modos de processamento
+
+| Modo | O que executa | Uso |
+|------|---------------|-----|
+| `fast` | metadata, thumbnail, OCR leve (Tesseract) | resposta rápida |
+| `balanced` | OCR robusto, layout simples, tags | **padrão** |
+| `full` | OCR + layout + Docling + VLM se habilitado | análise profunda, promoção RAG |
+
+### Builds do worker
+
+**Mínimo (Tesseract — leve, padrão do compose):**
+
+```bash
+docker compose --profile media up -d --build
+```
+
+**Com PaddleOCR + PP-Structure:**
+
+```bash
+MEDIA_INSTALL_OCR=true MEDIA_ENABLE_PADDLEOCR=true \
+  docker compose --profile media build media-worker
+docker compose --profile media up -d
+```
+
+**Com Docling (documentos, modo `full`):**
+
+```bash
+MEDIA_INSTALL_DOCLING=true MEDIA_ENABLE_DOCLING=true \
+  docker compose --profile media build media-worker
+```
+
+**Com VLM (Ollama nativo no host):**
+
+```env
+MEDIA_ENABLE_VLM=true
+MEDIA_VLM_MODEL=qwen2.5vl:7b
+MEDIA_VLM_BASE_URL=http://host.docker.internal:11434
+```
+
+### Cache e RAG de imagens
+
+- Cache por **hash + mode + providers** — imagens duplicadas não reprocessam.
+- `image_context.md` gerado para conversa e RAG (quando promovida).
+- `documentType = image_context` no índice RAG.
+
+### Health do worker
+
+```bash
+curl http://localhost:5000/health
+# → status de cada provider (paddleocr, docling, vlm)
+```
+
+---
+
+## Modelo de dados
+
+Principais entidades (PostgreSQL via Prisma):
+
+| Domínio | Tabelas | Função |
+|---------|---------|--------|
+| **Identidade** | `users`, `projects` | Usuário e projeto com `root_path`, `execution_mode` |
+| **Chat** | `conversations`, `messages`, `conversation_summaries` | Histórico e resumos incrementais |
+| **RAG** | `files`, `file_chunks`, `embeddings` | Arquivos indexados e vetores |
+| **Memória** | `memories`, `memory_history`, `recent_memory_items`, `deep_memory_items`, `archive_items`, `memory_access_logs`, `memory_portability_records` | Camadas de memória + export/import |
+| **Tools** | `tool_calls`, `tool_results`, `tool_audit_logs` | Execuções e aprovações |
+| **Jobs** | `jobs` | Tarefas longas (indexação, análise) |
+| **Mídia** | `media_assets`, `media_processing_results`, `media_ocr_blocks`, `media_layout_blocks`, `media_tags` | Pipeline de imagens |
+| **Eventos** | `orchestrator_events` | Eventos de tarefas, tools e mídia |
+
+O schema completo está em `backend/prisma/schema.prisma`. Migrations em `backend/prisma/migrations/`.
 
 ---
 
 ## Estrutura do repositório
 
 ```text
-my_llm/
-├── backend/                 # API NestJS (núcleo do sistema)
+local-agent-runtime/
+├── backend/                 # API NestJS (núcleo)
 │   ├── src/
 │   │   ├── orchestrator/    # Orquestrador cognitivo
-│   │   ├── context/         # Motor de contexto e resumos
+│   │   ├── context/         # Context Engine + resumos
 │   │   ├── rag/             # Indexação e busca vetorial
-│   │   ├── memory/          # Memórias permanentes do projeto
-│   │   ├── tools/           # Sistema de ferramentas
-│   │   ├── media/           # Pipeline de imagens (upload, jobs, RAG)
-│   │   ├── security/        # Permissões, políticas, auditoria
+│   │   ├── memory/          # Memórias consolidadas (CRUD)
+│   │   ├── memory-stratification/  # Camadas, router, export/import
+│   │   ├── tools/           # Ferramentas + aprovações
+│   │   ├── media/           # Pipeline de imagens (jobs, RAG)
+│   │   ├── security/        # Permissões e auditoria
 │   │   ├── jobs/            # Workers de tarefas longas
-│   │   ├── openwebui/       # Integração OpenAI-compatible + uploads
-│   │   ├── conversations/   # Conversas e mensagens
-│   │   └── llm/             # Cliente Ollama
+│   │   ├── openwebui/       # API OpenAI-compatible + uploads
+│   │   ├── health/          # Health checks granulares
+│   │   └── storage/         # Artifacts + limpeza de temp
 │   └── prisma/              # Schema e migrations
-├── media-worker/            # Worker Python (OCR, Pillow, Tesseract)
-├── docs/                    # Documentação do projeto (também usada pelo RAG)
-├── mds/                     # Especificações de arquitetura (design docs)
+├── media-worker/            # Worker Python (providers OCR/layout/VLM)
+├── docs/                    # Documentação indexável pelo RAG
 ├── scripts/                 # Scripts de desenvolvimento
+├── test-assets/images/      # Imagens de teste do pipeline
 ├── storage/                 # Dados em runtime (não versionados)
-│   ├── uploads/             # Uploads genéricos
-│   ├── projects/            # Arquivos de projeto (root_path)
-│   └── media/images/        # originals, thumbnails, processed, contexts
+│   ├── uploads/
+│   ├── projects/
+│   ├── media/images/        # originals, thumbnails, processed, contexts
+│   ├── memory/              # exports, imports, backups (portabilidade)
+│   ├── archive/             # cold archive de memória profunda
+│   └── artifacts/           # outputs completos de tools
 ├── docker-compose.yml
 └── .env.example
 ```
-
-> A pasta `frontend/` (Next.js legado) não está no repositório por padrão. Use o profile `frontend` no Docker Compose se adicioná-la localmente.
 
 ---
 
 ## Pré-requisitos
 
 - [Docker](https://docs.docker.com/get-docker/) e Docker Compose
-- [Ollama](https://ollama.com/) instalado no host (Windows, Linux ou macOS)
+- [Ollama](https://ollama.com/) no host
 - Modelo baixado, por exemplo:
 
 ```bash
 ollama pull qwen2.5:7b
-# ou o modelo definido em LLM_MODEL no .env
 ```
 
-> **Nota:** o backend funciona sem Ollama (modo fallback), mas as respostas serão limitadas até a LLM estar ativa.
+> O backend funciona sem Ollama (fallback técnico), mas respostas ficam limitadas.
+
+---
+
+## Performance-first runtime
+
+Este projeto é **local-first** e **leve por padrão**: usa pouca RAM em idle e escala processamento só quando necessário.
+
+- **API NestJS** (`APP_ROLE=api`) — HTTP, contexto, orquestração; **não** executa jobs pesados
+- **Workers BullMQ** (profile `workers`) — indexação, embeddings, orchestrator, memória, mídia
+- **Redis** — filas + working memory (maxmemory configurável)
+- **Postgres** — tuning conservador por perfil de RAM
+- **LLM** — fora do Docker (Ollama nativo) para melhor uso de GPU/RAM
+
+### Por que workers?
+
+Tarefas CPU-intensivas **não rodam no processo da API**. O backend enfileira e workers separados consomem jobs — o chat continua responsivo.
+
+| Worker | Fila | Env |
+|--------|------|-----|
+| orchestrator | `orchestrator-jobs` | `JOBS_ORCHESTRATOR_CONCURRENCY` |
+| indexing | `file-index` | `JOBS_INDEXING_CONCURRENCY` |
+| embeddings | `embeddings` | `JOBS_EMBEDDINGS_CONCURRENCY` |
+| memory | `memory-jobs` | `JOBS_MEMORY_CONCURRENCY` |
+| media (Python) | HTTP :5000 | profile `media` |
+
+### Perfis de hardware
+
+| Perfil | RAM | Arquivo |
+|--------|-----|---------|
+| `lite` | 8 GB | `.env.example.lite` |
+| `balanced-low` | 16 GB | `.env.example.balanced-low` |
+| `balanced` | 32 GB+ | `.env.example.balanced` |
+| `performance` | 64 GB+ | `.env.example.performance` |
+
+### Resource Guard
+
+Jobs de baixa prioridade (decay, export, backup) são adiados quando RAM/CPU excedem limites.
+
+```bash
+curl http://localhost:3001/health/resources
+```
 
 ---
 
@@ -180,56 +398,60 @@ ollama pull qwen2.5:7b
 
 ```bash
 cp .env.example .env
-# Ajuste LLM_MODEL, senhas etc. se necessário
 ```
 
 ### 2. Subir a stack
 
-**Com Open WebUI (recomendado):**
-
 ```bash
+# Recomendado: Open WebUI + workers + mídia
+docker compose --profile openwebui --profile workers --profile media up -d --build
+
+# Ou via scripts (já incluem workers):
 ./scripts/openwebui-up.sh
-```
-
-**Com Open WebUI + processamento de imagens:**
-
-```bash
 WITH_OPENWEBUI=1 ./scripts/media-up.sh
-# ou manualmente:
-docker compose --profile openwebui --profile media up -d --build
 ```
 
-**Apenas backend + serviços base (postgres, redis):**
+> Com `APP_ROLE=api` no backend (padrão Docker), jobs BullMQ exigem o profile **`workers`**. Para dev local em um único processo, use `APP_ROLE=all-in-one` no `.env`.
+
+### 3. Migrations e seed
 
 ```bash
-./scripts/dev-up.sh
+./scripts/db-migrate.sh
+./scripts/seed.sh
 ```
 
-### 3. Iniciar o Ollama (no host)
+> **Após rebuild com código novo:** se o backend não subir, rode dentro do container:
+> `docker compose exec backend npm install && docker compose exec backend npx prisma generate`
+> Depois reinicie: `docker compose restart backend`
+
+### 4. Ollama no host
 
 ```bash
 ollama serve
 ```
 
-### 4. Configurar o Open WebUI
+### 5. Open WebUI
 
-Acesse http://localhost:3080 e, em **Admin → Settings → Connections → OpenAI API**:
+http://localhost:3080 → **Admin → Connections → OpenAI API**
 
 | Campo | Valor |
 |-------|-------|
 | Base URL | `http://localhost:3001/v1` |
 | API Key | `local-dev-key` |
 
-Selecione um modelo lógico: `local-assistant`, `local-coder` ou `local-fast`.
-
-### 5. Validar
+### 6. Validar
 
 ```bash
-curl http://localhost:3001/health
+curl http://localhost:3001/health          # status agregado (db, redis, llm, media)
 curl http://localhost:3001/v1/models
+curl http://localhost:5000/health            # providers do media-worker
 
-# Com profile media ativo:
-curl http://localhost:5000/health
+# Health "degraded" com llm: unavailable é normal se Ollama não estiver rodando no host
+
+# Após migrations de memória estratificada:
+curl -X POST http://localhost:3001/memory/retrieve \
+  -H 'Content-Type: application/json' \
+  -d '{"projectId":"00000000-0000-4000-8000-000000000001","query":"arquitetura"}'
 ```
 
 ---
@@ -240,182 +462,234 @@ curl http://localhost:5000/health
 |---------|-----|
 | Open WebUI | http://localhost:3080 |
 | Backend API | http://localhost:3001 |
-| Health check | http://localhost:3001/health |
-| Aprovações de tools | http://localhost:3001/approvals |
-| Media Worker | http://localhost:5000/health (profile `media`) |
-| Frontend legado | http://localhost:3000 (profile `frontend`) |
+| Health (agregado) | http://localhost:3001/health |
+| Health DB / Redis / LLM / Media | http://localhost:3001/health/{db,redis,llm,media-worker,storage} |
+| Health recursos / filas / workers | http://localhost:3001/health/{resources,queues,workers} |
+| Aprovações | http://localhost:3001/approvals |
+| Media Worker | http://localhost:5000/health |
 
 ---
 
 ## API principal
 
-O backend expõe uma API **compatível com OpenAI** para integração com Open WebUI e outros clientes.
-
 | Endpoint | Descrição |
 |----------|-----------|
-| `GET /v1/models` | Lista modelos lógicos disponíveis |
-| `POST /v1/chat/completions` | Chat (com suporte a streaming) |
-| `POST /v1/files` | Upload de arquivos; imagens vão para o pipeline de mídia |
-| `POST /orchestrator/chat` | Chat direto via orquestrador |
-| `GET /orchestrator/events/project/:id` | Eventos de tarefas, tools e mídia |
-| `POST /tools/approve/:id` | Aprovar execução de tool |
-| `POST /tools/reject/:id` | Rejeitar execução de tool |
+| `GET /v1/models` | Modelos lógicos |
+| `POST /v1/chat/completions` | Chat (streaming) |
+| `POST /v1/files` | Upload; imagens → pipeline de mídia |
+| `POST /orchestrator/chat` | Chat via orquestrador (com debug) |
+| `GET /orchestrator/events/project/:id` | Eventos paginados |
+| `GET /jobs/project/:id` | Jobs paginados |
+| `POST /tools/approve/:id` | Aprovar tool |
 | `GET /rag/search?projectId=&q=` | Busca RAG |
-| `GET /security/audit/project/:id` | Logs de auditoria |
+| `GET /security/audit/project/:id` | Auditoria paginada |
+| `GET /memories/project/:id` | Memórias paginadas |
+| `GET /files/project/:id` | Arquivos indexados paginados |
 | `POST /media/upload` | Upload direto de imagem |
-| `GET /media/:id` | Resultado estruturado de uma imagem |
-| `GET /media?projectId=&query=` | Busca em imagens processadas |
-| `POST /media/:id/promote` | Promove imagem para conhecimento do projeto |
-| `POST /media/:id/index` | Indexa `image_context.md` no RAG |
+| `GET /media/:id` | Resultado (`?includeMarkdown=true`) |
+| `POST /media/:id/promote` | Promove para conhecimento do projeto |
+| `POST /storage/cleanup` | Limpa temp e artifacts antigos |
+| `POST /memory/export` | Export ZIP (profiles: minimal, portable, full) |
+| `POST /memory/import` | Import ZIP (`mode`: new_project, merge, replace) |
+| `POST /memory/import/validate` | Valida manifest/checksums |
+| `GET /memory/exports` | Lista exports/backups |
+| `POST /memory/backups/create` | Backup full do projeto |
+| `POST /memory/retrieve` | Busca nas camadas de memória |
+| `POST /memory/decay/run` | Executa envelhecimento recent→deep→archive |
+
+### Memória em camadas
+
+| Camada | Storage | Uso |
+|--------|---------|-----|
+| Working | Redis (TTL) | Objetivo/plano/job ativo |
+| Recent | Postgres | Fatos recentes não consolidados |
+| Consolidated | `memories` | Decisões confirmadas |
+| Deep | Postgres + storage | Histórico recuperável sob demanda |
+| Cold Archive | `storage/archive/` | Snapshots compactados |
+
+CLI: `npm run memory:export`, `memory:import`, `memory:backup`, `memory:validate` (em `backend/`).
 
 ### Tools de mídia
 
 | Tool | Descrição |
 |------|-----------|
-| `process_image` | Dispara/reprocessa OCR e análise de uma imagem |
-| `search_media` | Busca por OCR, tags e resumo semântico |
-| `get_media_result` | Retorna JSON estruturado completo |
-| `promote_media_to_project` | Promove para asset do projeto (requer aprovação) |
+| `process_image` | Dispara/reprocessa análise (`mode`, `enableVlm`) |
+| `search_media` | Busca por OCR, tags, resumo |
+| `get_media_result` | JSON/markdown/blocks configuráveis |
+| `promote_media_to_project` | Promove asset (requer aprovação) |
 | `index_media_context` | Indexa `image_context.md` no RAG (requer aprovação) |
-
-Documentação detalhada de arquitetura: pasta `mds/` e `docs/`.
 
 ---
 
 ## Modelos lógicos
 
-O backend expõe **modelos lógicos**, não os modelos físicos do Ollama. Isso permite trocar o modelo interno sem reconfigurar o frontend.
+O backend expõe modelos lógicos — o Open WebUI não precisa conhecer o modelo físico do Ollama.
 
-| Modelo lógico | Uso sugerido |
-|---------------|--------------|
+| Modelo | Uso |
+|--------|-----|
 | `local-assistant` | Assistente geral |
-| `local-coder` | Tarefas de código |
+| `local-coder` | Código e projeto |
 | `local-fast` | Respostas rápidas |
 
-Cada modelo pode ser associado a um `projectId` via variáveis `OPENWEBUI_LOGICAL_MODELS` e `OPENWEBUI_API_KEY_PROJECT_MAP` no `.env`.
+Configuração: `OPENWEBUI_LOGICAL_MODELS` e `OPENWEBUI_API_KEY_PROJECT_MAP` no `.env`.
 
 ---
 
 ## Segurança
 
-- **Modo de execução por projeto:** `safe` (só leitura), `developer` (escrita com aprovação), `autonomous` (mais permissivo).
-- **root_path:** tools só acessam arquivos dentro do diretório do projeto.
-- **Shell desabilitado por padrão** (`ALLOW_SHELL_COMMANDS=false`).
-- **Imagens:** limite de tamanho/dimensões; indexação no RAG exige confirmação (`MEDIA_REQUIRE_CONFIRMATION_TO_INDEX=true`).
-- **Auditoria:** toda execução de tool gera log em `tool_audit_logs`.
-- **Aprovação:** tools de escrita/execução ficam `pending` até aprovação explícita.
+| Controle | Descrição |
+|----------|-----------|
+| `execution_mode` | `safe` / `developer` / `autonomous` por projeto |
+| `root_path` | Tools só acessam arquivos dentro do diretório do projeto |
+| Aprovação | Tools de escrita/execução ficam `pending` |
+| Shell | Desabilitado por padrão (`ALLOW_SHELL_COMMANDS=false`) |
+| Imagens | Limites de tamanho; RAG exige confirmação |
+| Auditoria | Toda tool gera log em `tool_audit_logs` |
 
 ---
 
 ## Scripts úteis
 
 ```bash
-./scripts/dev-up.sh          # Sobe backend, postgres, redis
-./scripts/openwebui-up.sh    # Sobe stack base + Open WebUI
-./scripts/media-up.sh        # Sobe media-worker (use WITH_OPENWEBUI=1 para incluir Open WebUI)
-./scripts/dev-down.sh        # Para os containers
-./scripts/db-migrate.sh      # Aplica migrations Prisma
-./scripts/seed.sh            # Seed do banco (usuário e projeto padrão)
+./scripts/dev-up.sh          # backend + postgres + redis
+./scripts/openwebui-up.sh    # + Open WebUI
+./scripts/media-up.sh        # + media-worker (WITH_OPENWEBUI=1 para ambos)
+./scripts/dev-down.sh        # para containers
+./scripts/db-migrate.sh      # migrations Prisma
+./scripts/seed.sh            # usuário e projeto padrão
 ```
 
 ---
 
-## Configuração da LLM
+## Configuração
 
-O backend em Docker acessa o Ollama no host via:
+### LLM
 
 ```env
 LLM_BASE_URL=http://host.docker.internal:11434
 LLM_MODEL=qwen3:14b
+LLM_TIMEOUT_MS=120000
 ```
 
-No Linux sem `host.docker.internal`, use o IP da máquina host ou configure `extra_hosts` no `docker-compose.yml` (já incluso para WSL2).
-
----
-
-## Configuração de mídia
-
-Variáveis principais (ver `.env.example`):
+### Contexto e orquestrador
 
 ```env
-MEDIA_STORAGE_ROOT=/storage/media
-MEDIA_WORKER_URL=http://media-worker:5000
-MEDIA_MAX_IMAGE_SIZE_MB=25
+MAX_CONTEXT_TOKENS=24000
+CONTEXT_MAX_RECENT_TOKENS=3000
+CONTEXT_SKIP_RAG_CASUAL=true
+COGNITIVE_MAX_CYCLES=8
+COGNITIVE_DEBUG=false
+```
+
+### Mídia
+
+```env
 MEDIA_DEFAULT_PROCESSING_MODE=balanced
+MEDIA_OCR_PRIMARY=paddleocr
+MEDIA_ENABLE_PADDLEOCR=false          # true após build com INSTALL_OCR
+MEDIA_ENABLE_TESSERACT_FALLBACK=true
+MEDIA_ENABLE_PP_STRUCTURE=false
+MEDIA_ENABLE_DOCLING=false
 MEDIA_ENABLE_VLM=false
 MEDIA_REQUIRE_CONFIRMATION_TO_INDEX=true
 ```
 
-O worker usa **Tesseract** por padrão (leve). PaddleOCR e VLM podem ser habilitados em builds futuros do `media-worker`.
+### Memória estratificada
+
+```env
+MEMORY_RECENT_TTL_DAYS=30
+MEMORY_RETRIEVAL_ENABLE_DEEP=true
+MEMORY_EXPORT_DEFAULT_PROFILE=portable
+MEMORY_IMPORT_DEFAULT_MODE=new_project
+MEMORY_IMPORT_AUTO_REEMBED=true
+MEMORY_STORAGE_ROOT=/storage/memory
+```
+
+CLI (dentro de `backend/`):
+
+```bash
+npm run memory:export -- --project 00000000-0000-4000-8000-000000000001 --profile portable
+npm run memory:import -- ./export.zip --mode new_project
+npm run memory:backup -- --project 00000000-0000-4000-8000-000000000001
+```
+
+Lista completa em `.env.example`.
 
 ---
 
 ## Perfis Docker
 
-Serviços opcionais são ativados por **profile**. A stack base (`backend`, `postgres`, `redis`) sobe sem profiles.
+A stack base (`backend`, `postgres`, `redis`) sobe sem profiles.
 
 ```bash
-# Open WebUI (frontend de chat)
-docker compose --profile openwebui up -d
-
-# Processamento de imagens
-docker compose --profile media up -d
-
-# Open WebUI + imagens (setup completo recomendado)
-docker compose --profile openwebui --profile media up -d
-
-# Qdrant (vetores alternativos ao pgvector)
-docker compose --profile qdrant up -d
-
-# Frontend Next.js legado (requer pasta frontend/ local)
-docker compose --profile frontend up -d
+docker compose --profile openwebui --profile workers --profile media up -d   # setup completo
+docker compose --profile workers up -d                                         # só workers
+docker compose --profile workers-split up -d                                 # workers separados por tipo
+docker compose --profile qdrant up -d                                        # vetores alternativos
 ```
 
-| Profile | Serviço | Quando usar |
-|---------|---------|-------------|
-| `openwebui` | Open WebUI | Chat com interface familiar |
-| `media` | media-worker | Upload e análise de imagens |
-| `qdrant` | Qdrant | Vetores fora do pgvector |
-| `frontend` | Next.js legado | UI alternativa local |
+| Profile | Serviço |
+|---------|---------|
+| `openwebui` | Open WebUI |
+| `workers` | worker-all (todas as filas NestJS) |
+| `workers-split` | worker-orchestrator, indexing, embeddings, memory |
+| `media` | media-worker (Python) |
+| `qdrant` | Qdrant |
 
 ---
 
-## O que este projeto **não** é (ainda)
+## Otimização
 
-- Multimodal completo (áudio e vídeo) — imagens já suportadas; áudio/vídeo planejados
-- App nativo Windows / notificações de sistema
+O projeto aplica otimizações locais por padrão:
+
+- **Cache RAG** por hash + modelo de embedding + config de chunks
+- **Cache de imagens** por hash + mode + providers
+- **Context budget** com truncamento inteligente de camadas
+- **Resource Guard** — adia jobs low-priority sob pressão de RAM/CPU
+- **Filas separadas** (`orchestrator-jobs`, `media-processing`, `memory-jobs`, `file-index`, `embeddings`) com concorrência por perfil
+- **Artifacts** para outputs grandes de tools (`storage/artifacts/`)
+- **Health degradado** — LLM ou media-worker off não derrubam o backend
+
+---
+
+## Limitações atuais
+
+- Áudio e vídeo ainda não implementados (imagens já suportadas)
+- App nativo / notificações de sistema
 - Multi-usuário em produção
-- Substituto do Open WebUI para gerenciar modelos localmente
+- PaddleOCR/Docling exigem rebuild do worker (não vêm no build mínimo)
+- `GET /health` retorna `degraded` quando Ollama está off — demais serviços continuam operacionais
 
 ---
 
-## Documentação adicional
+## Troubleshooting Docker
 
-| Pasta | Conteúdo |
-|-------|----------|
-| `docs/` | Visão prática: arquitetura, tools, RAG, segurança |
-| `mds/` | Especificações completas de cada camada (design docs) |
+| Sintoma | Solução |
+|---------|---------|
+| Backend com erros TS (`recentMemoryItem` etc.) | `docker compose exec backend npx prisma generate && docker compose restart backend` |
+| `adm-zip` não encontrado | `docker compose exec backend npm install` |
+| Migration pendente | `./scripts/db-migrate.sh` |
+| Media-worker unhealthy | `docker compose --profile media up -d --build media-worker` |
+| LLM unavailable no health | Inicie Ollama no host: `ollama serve` |
 
-Ordem sugerida de leitura em `mds/`:
+---
 
-1. `01-database-schema.md` — modelo de dados
-2. `02-chat-context-engine.md` — motor de contexto
-3. `03-memory-rag.md` — memória e RAG
-4. `04-tool-system.md` — ferramentas
-5. `05-security-permissions.md` — segurança
-6. `06-cognitive-orchestrator.md` — orquestrador
-7. `07-frontend-open-webui-integration.md` — integração Open WebUI
-8. `08-project-execution-flow.md` — fluxo operacional completo
-9. `09-media-processing-images.md` — pipeline de imagens (OCR, contexto, RAG)
+## Documentação complementar
+
+A pasta `docs/` contém material de referência (arquitetura, tools, decisões) também indexável pelo RAG do projeto:
+
+- `docs/architecture.md`
+- `docs/tools.md`
+- `docs/decisions.md`
 
 ---
 
 ## Licença
 
-Consulte o arquivo `LICENSE` na raiz do repositório (se aplicável).
+Consulte `LICENSE` na raiz do repositório.
 
 ---
 
 ## Contribuindo
 
-Issues e pull requests são bem-vindos. Antes de contribuir, leia `mds/08-project-execution-flow.md` para entender o fluxo oficial do sistema e manter a arquitetura consistente.
+Issues e pull requests são bem-vindos. Mantenha o fluxo oficial: **Open WebUI → Backend → Orquestrador → Contexto/Tools → LLM**. Não conecte o Open WebUI diretamente ao Ollama.

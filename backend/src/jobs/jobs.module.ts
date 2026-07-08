@@ -5,7 +5,6 @@ import { JobRunnerService } from './job-runner.service';
 import { JobEventService } from './job-event.service';
 import { JobsQueryService } from './jobs-query.service';
 import { JobsController } from './jobs.controller';
-import { OrchestratorJobProcessor } from './orchestrator-job.processor';
 import { RagModule } from '../rag/rag.module';
 import { LlmModule } from '../llm/llm.module';
 import { OrchestratorModule } from '../orchestrator/orchestrator.module';
@@ -24,9 +23,8 @@ import { ToolsModule } from '../tools/tools.module';
     JobsQueryService,
     JobRunnerService,
     JobEventService,
-    OrchestratorJobProcessor,
   ],
   controllers: [JobsController],
-  exports: [JobsService],
+  exports: [JobsService, JobRunnerService],
 })
 export class JobsModule {}

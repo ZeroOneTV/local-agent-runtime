@@ -5,7 +5,7 @@ import { MediaContextService } from './media-context.service';
 import { MediaEventService } from './media-event.service';
 import { MediaConfigService } from './media.config';
 import { PrismaService } from '../database/prisma.service';
-import { ImageProcessingResultDto, ProcessingMode } from './media.types';
+import { ImageProcessingResultDto, ProcessingMode, ProcessCapabilitiesDto } from './media.types';
 
 @Injectable()
 export class MediaProcessingService {
@@ -21,15 +21,22 @@ export class MediaProcessingService {
   async runProcessImage(params: {
     mediaAssetId: string;
     mode?: ProcessingMode;
+    capabilities?: ProcessCapabilitiesDto;
+    enableVlm?: boolean;
   }) {
     const asset = await this.prisma.mediaAsset.findUniqueOrThrow({
       where: { id: params.mediaAssetId },
     });
 
     const mode = params.mode ?? (this.config.defaultProcessingMode as ProcessingMode);
+    const fingerprint = this.config.buildProviderFingerprint(mode);
 
-    const cached = await this.findCachedResult(asset.hash, mode, asset.projectId);
+    const cached = await this.findCachedResult(asset.hash, mode, asset.projectId, fingerprint);
     if (cached) {
+      await this.events.emit('media.processing.cached', asset.projectId, asset.conversationId ?? undefined, {
+        mediaAssetId: asset.id,
+        sourceAssetId: cached.asset.id,
+      });
       return this.applyCachedResult(asset, cached);
     }
 
@@ -59,8 +66,11 @@ export class MediaProcessingService {
         originalPath: asset.originalPath,
         projectId: asset.projectId,
         mode,
+        capabilities: params.capabilities,
+        enableVlm: params.enableVlm,
       });
 
+      await this.emitStepEvents(asset, dto);
       const saved = await this.persistResult(asset, resultRecord.id, dto, mode);
       return saved;
     } catch (error) {
@@ -89,6 +99,7 @@ export class MediaProcessingService {
     hash: string | null,
     mode: ProcessingMode,
     projectId: string,
+    fingerprint: Record<string, string>,
   ) {
     if (!hash) return null;
 
@@ -102,14 +113,65 @@ export class MediaProcessingService {
         processingResults: {
           where: { processingMode: mode, status: 'completed' },
           orderBy: { finishedAt: 'desc' },
-          take: 1,
+          take: 3,
         },
       },
     });
 
-    const result = prior?.processingResults[0];
-    if (!result?.resultJson) return null;
-    return { asset: prior!, result };
+    if (!prior) return null;
+
+    for (const result of prior.processingResults) {
+      if (!result.resultJson) continue;
+      const versions = (result.providerVersions ?? {}) as Record<string, string>;
+      if (this.providerFingerprintMatches(versions, fingerprint, result.resultJson)) {
+        return { asset: prior, result };
+      }
+    }
+
+    return null;
+  }
+
+  private providerFingerprintMatches(
+    stored: Record<string, string>,
+    expected: Record<string, string>,
+    resultJson: unknown,
+  ): boolean {
+    const dto = resultJson as ImageProcessingResultDto;
+    const fromResult = dto.providerVersions ?? dto.providers;
+    if (!fromResult) return stored.cache === 'hash-reuse';
+
+    const keys = ['ocr', 'layout', 'document', 'vision'] as const;
+    for (const key of keys) {
+      const exp = expected[key === 'vision' ? 'vision' : key];
+      const got =
+        (stored[key] as string | undefined) ??
+        (typeof fromResult === 'object' && fromResult !== null
+          ? (fromResult as Record<string, string>)[key]
+          : undefined);
+      if (exp && got && exp !== got && got !== 'skipped' && got !== 'unavailable') {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  private async emitStepEvents(
+    asset: { id: string; projectId: string; conversationId: string | null },
+    dto: ImageProcessingResultDto,
+  ) {
+    const base = { mediaAssetId: asset.id, performance: dto.performance };
+    if (dto.ocr.fullText || dto.ocr.blocks.length) {
+      await this.events.emit('media.processing.ocr.completed', asset.projectId, asset.conversationId ?? undefined, base);
+    }
+    if (dto.layout.blocks.length) {
+      await this.events.emit('media.processing.layout.completed', asset.projectId, asset.conversationId ?? undefined, base);
+    }
+    if (dto.document?.markdown) {
+      await this.events.emit('media.processing.document.completed', asset.projectId, asset.conversationId ?? undefined, base);
+    }
+    if (dto.vision.enabled && dto.vision.summary) {
+      await this.events.emit('media.processing.vision.completed', asset.projectId, asset.conversationId ?? undefined, base);
+    }
   }
 
   private async applyCachedResult(
@@ -236,9 +298,12 @@ export class MediaProcessingService {
         contextMarkdownPath: contextPath,
         finishedAt: new Date(),
         providerVersions: {
-          ocr: dto.ocr.provider,
-          layout: dto.layout.provider,
-          vision: dto.vision.provider,
+          ...(dto.providerVersions ?? {}),
+          ocr: dto.providers?.ocr ?? dto.ocr.provider,
+          layout: dto.providers?.layout ?? dto.layout.provider,
+          document: dto.providers?.document ?? 'disabled',
+          vision: dto.providers?.vision ?? dto.vision.provider,
+          cacheKey: dto.cacheKey,
         },
       },
     });
@@ -248,6 +313,8 @@ export class MediaProcessingService {
       resultId: updated.id,
       summary: dto.semantic.summary,
       tags: dto.semantic.tags,
+      performance: dto.performance,
+      providers: dto.providers,
     });
 
     return updated;

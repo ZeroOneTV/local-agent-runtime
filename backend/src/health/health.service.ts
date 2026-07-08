@@ -3,6 +3,9 @@ import { ConfigService } from '@nestjs/config';
 import * as fs from 'fs/promises';
 import { PrismaService } from '../database/prisma.service';
 import { LlmService } from '../llm/llm.service';
+import { ResourceGuardService } from '../runtime/resource-guard.service';
+import { QueueMonitorService } from '../runtime/queue-monitor.service';
+import { getAppRole } from '../runtime/app-role.util';
 
 export type ServiceStatus = 'ok' | 'unavailable' | 'degraded';
 
@@ -19,6 +22,8 @@ export class HealthService {
     private readonly prisma: PrismaService,
     private readonly llm: LlmService,
     private readonly config: ConfigService,
+    private readonly resourceGuard: ResourceGuardService,
+    private readonly queueMonitor: QueueMonitorService,
   ) {}
 
   async checkAll(): Promise<HealthReport> {
@@ -159,5 +164,29 @@ export class HealthService {
         detail: { error: error instanceof Error ? error.message : String(error) },
       };
     }
+  }
+
+  async checkResources() {
+    const resources = this.resourceGuard.getSnapshot();
+    const queues = await this.queueMonitor.getQueueCounts();
+    return {
+      profile: resources.profile,
+      appRole: getAppRole(),
+      memory: resources.memory,
+      cpu: resources.cpu,
+      underPressure: resources.underPressure,
+      lowPriorityPaused: resources.lowPriorityPaused,
+      queues: Object.fromEntries(
+        Object.entries(queues).map(([k, v]) => [k, v.waiting + v.active]),
+      ),
+    };
+  }
+
+  async checkQueues() {
+    return this.queueMonitor.getQueueCounts();
+  }
+
+  async checkWorkers() {
+    return this.queueMonitor.getWorkersReport();
   }
 }

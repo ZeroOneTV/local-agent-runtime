@@ -1,6 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { MediaConfigService } from './media.config';
-import { ImageProcessingResultDto, ProcessingMode } from './media.types';
+import {
+  ImageProcessingResultDto,
+  ProcessCapabilitiesDto,
+  ProcessingMode,
+} from './media.types';
 
 @Injectable()
 export class MediaWorkerClient {
@@ -13,6 +17,8 @@ export class MediaWorkerClient {
     originalPath: string;
     projectId: string;
     mode: ProcessingMode;
+    capabilities?: ProcessCapabilitiesDto;
+    enableVlm?: boolean;
   }): Promise<ImageProcessingResultDto> {
     const url = `${this.config.workerUrl}/process`;
     const controller = new AbortController();
@@ -27,7 +33,13 @@ export class MediaWorkerClient {
           originalPath: params.originalPath,
           projectId: params.projectId,
           mode: params.mode,
-          enableVlm: this.config.enableVlm,
+          enableVlm: params.enableVlm ?? this.config.enableVlm,
+          requestedCapabilities: params.capabilities ?? {
+            ocr: true,
+            layout: true,
+            document: params.mode === 'full' ? true : 'auto',
+            vision: params.enableVlm ? true : 'auto',
+          },
         }),
         signal: controller.signal,
       });
@@ -59,6 +71,7 @@ export class MediaWorkerClient {
       type: 'image',
       imageType: 'unknown',
       processingMode: params.mode,
+      providers: { ocr: 'disabled', layout: 'disabled', document: 'disabled', vision: 'disabled' },
       metadata: {
         width: 0,
         height: 0,
@@ -68,6 +81,7 @@ export class MediaWorkerClient {
       },
       ocr: { provider: 'disabled', language: [], fullText: '', blocks: [] },
       layout: { provider: 'disabled', blocks: [] },
+      document: { markdown: null, tables: [] },
       vision: {
         provider: 'disabled',
         enabled: false,
@@ -82,6 +96,7 @@ export class MediaWorkerClient {
         possibleIntent: 'unknown',
       },
       warnings: ['Media worker unavailable; minimal metadata only.'],
+      performance: { totalMs: 0 },
     };
   }
 }

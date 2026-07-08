@@ -1,3 +1,25 @@
+x-worker: &worker-base
+  build:
+    context: ./backend
+    dockerfile: Dockerfile
+  restart: unless-stopped
+  env_file:
+    - .env
+  volumes:
+    - ./backend:/app
+    - /app/node_modules
+    - ./storage:/storage
+    - ./:/workspace:ro
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_started
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
+  networks:
+    - local-ai-network
+
 services:
   backend:
     build:
@@ -7,6 +29,10 @@ services:
     restart: unless-stopped
     env_file:
       - .env
+    environment:
+      - APP_ROLE=api
+      - MEDIA_WORKER_URL=http://media-worker:5000
+      - MEDIA_STORAGE_ROOT=/storage/media
     ports:
       - "3001:3001"
     volumes:
@@ -22,36 +48,57 @@ services:
       media-worker:
         condition: service_healthy
         required: false
-    environment:
-      # Hostname interno do Docker; sobrescreva em .env se necessário
-      - MEDIA_WORKER_URL=http://media-worker:5000
-      - MEDIA_STORAGE_ROOT=/storage/media
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:
       - local-ai-network
 
-  # UI legada Next.js — opcional; o frontend oficial é o Open WebUI (profile openwebui)
-  frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-    container_name: local-ai-frontend
-    restart: unless-stopped
-    env_file:
-      - .env
-    ports:
-      - "3000:3000"
-    volumes:
-      - ./frontend:/app
-      - /app/node_modules
-      - /app/.next
-    depends_on:
-      - backend
-    networks:
-      - local-ai-network
+  worker-all:
+    <<: *worker-base
+    container_name: local-ai-worker-all
+    command: npm run worker:all
+    environment:
+      - APP_ROLE=worker-all
+      - MEDIA_WORKER_URL=http://media-worker:5000
+      - MEDIA_STORAGE_ROOT=/storage/media
     profiles:
-      - frontend
+      - workers
+
+  worker-orchestrator:
+    <<: *worker-base
+    container_name: local-ai-worker-orchestrator
+    command: npm run worker:orchestrator
+    environment:
+      - APP_ROLE=worker-orchestrator
+    profiles:
+      - workers-split
+
+  worker-indexing:
+    <<: *worker-base
+    container_name: local-ai-worker-indexing
+    command: npm run worker:indexing
+    environment:
+      - APP_ROLE=worker-indexing
+    profiles:
+      - workers-split
+
+  worker-embeddings:
+    <<: *worker-base
+    container_name: local-ai-worker-embeddings
+    command: npm run worker:embeddings
+    environment:
+      - APP_ROLE=worker-embeddings
+    profiles:
+      - workers-split
+
+  worker-memory:
+    <<: *worker-base
+    container_name: local-ai-worker-memory
+    command: npm run worker:memory
+    environment:
+      - APP_ROLE=worker-memory
+    profiles:
+      - workers-split
 
   postgres:
     image: pgvector/pgvector:pg16
@@ -61,6 +108,16 @@ services:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
+    command:
+      - postgres
+      - -c
+      - shared_buffers=${POSTGRES_SHARED_BUFFERS:-256MB}
+      - -c
+      - work_mem=${POSTGRES_WORK_MEM:-8MB}
+      - -c
+      - maintenance_work_mem=${POSTGRES_MAINTENANCE_WORK_MEM:-128MB}
+      - -c
+      - effective_cache_size=${POSTGRES_EFFECTIVE_CACHE_SIZE:-1GB}
     ports:
       - "5432:5432"
     volumes:
@@ -77,6 +134,12 @@ services:
     image: redis:7-alpine
     container_name: local-ai-redis
     restart: unless-stopped
+    command:
+      - redis-server
+      - --maxmemory
+      - ${REDIS_MAXMEMORY:-256mb}
+      - --maxmemory-policy
+      - allkeys-lru
     ports:
       - "6379:6379"
     volumes:
@@ -126,15 +189,34 @@ services:
     build:
       context: ./media-worker
       dockerfile: Dockerfile
+      args:
+        INSTALL_OCR: "${MEDIA_INSTALL_OCR:-false}"
+        INSTALL_DOCLING: "${MEDIA_INSTALL_DOCLING:-false}"
+        INSTALL_VISION: "${MEDIA_INSTALL_VISION:-false}"
     container_name: local-ai-media-worker
     restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       - STORAGE_ROOT=/storage/media
-      - MEDIA_ENABLE_VLM=false
-      - MEDIA_ENABLE_PADDLEOCR=false
+      - MEDIA_DEFAULT_PROCESSING_MODE=${MEDIA_DEFAULT_PROCESSING_MODE:-balanced}
+      - MEDIA_OCR_PRIMARY=paddleocr
+      - MEDIA_ENABLE_PADDLEOCR=${MEDIA_ENABLE_PADDLEOCR:-false}
+      - MEDIA_ENABLE_TESSERACT_FALLBACK=true
+      - MEDIA_OCR_LANGUAGES=pt,en
+      - MEDIA_ENABLE_PP_STRUCTURE=${MEDIA_ENABLE_PP_STRUCTURE:-false}
+      - MEDIA_ENABLE_DOCLING=${MEDIA_ENABLE_DOCLING:-false}
+      - MEDIA_DOCLING_ONLY_FOR_DOCUMENTS=true
+      - MEDIA_ENABLE_VLM=${MEDIA_ENABLE_VLM:-false}
+      - MEDIA_VLM_PROVIDER=ollama
+      - MEDIA_VLM_MODEL=qwen2.5vl:7b
+      - MEDIA_VLM_BASE_URL=http://host.docker.internal:11434
+      - MEDIA_VLM_MAX_IMAGE_SIZE=1280
       - MEDIA_GENERATE_THUMBNAILS=true
+      - MEDIA_THUMBNAIL_FORMAT=webp
       - MEDIA_MAX_IMAGE_WIDTH=8000
       - MEDIA_MAX_IMAGE_HEIGHT=8000
+      - MEDIA_PROCESSING_TIMEOUT_MS=180000
     volumes:
       - ./storage:/storage
     ports:

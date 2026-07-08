@@ -5,6 +5,7 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../database/prisma.service';
 import { JobEventService } from './job-event.service';
 import { JobType, OrchestratorJobPayload } from './job.types';
+import { defaultJobOptions, JobPriority } from '../runtime/job-priority';
 
 @Injectable()
 export class JobsService {
@@ -60,7 +61,11 @@ export class JobsService {
     await this.queue.add(
       'run',
       { jobId: job.id },
-      { jobId: job.id, removeOnComplete: 100, removeOnFail: 50 },
+      {
+        ...defaultJobOptions,
+        jobId: job.id,
+        priority: JobPriority.MEDIUM,
+      },
     );
 
     this.logger.log(`Job ${job.id} (${type}) enfileirado`);

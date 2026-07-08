@@ -4,6 +4,7 @@ import { PrismaService } from '../database/prisma.service';
 import { RetrievalService } from '../rag/retrieval.service';
 import { ContextConfigService } from './context.config';
 import { MediaService } from '../media/media.service';
+import { MemoryRetrievalRouterService } from '../memory-stratification/memory-retrieval-router.service';
 import { estimateTokenCount } from '../common/constants';
 import { SYSTEM_PROMPT } from '../llm/prompts/system.prompt';
 import { TOOL_USE_PROMPT } from '../llm/prompts/tool-use.prompt';
@@ -29,6 +30,7 @@ export class ContextService {
     private readonly contextConfig: ContextConfigService,
     private readonly config: ConfigService,
     private readonly media: MediaService,
+    private readonly memoryRouter: MemoryRetrievalRouterService,
   ) {}
 
   async build(input: BuildContextInput): Promise<BuiltContext> {
@@ -73,6 +75,26 @@ export class ContextService {
       layersIncluded.push('project');
     }
 
+    const memoryStarted = Date.now();
+    const memoryResult = await this.memoryRouter.retrieve({
+      projectId,
+      conversationId,
+      query: currentMessage,
+    });
+    const memoryMs = Date.now() - memoryStarted;
+    const deepMemorySkipped = memoryResult.metadata.skippedLayers.includes('deep');
+    const memoryLayers = this.memoryRouter.formatLayersForContext(memoryResult);
+
+    if (memoryLayers.working) {
+      layers.push({ name: 'working_memory', content: memoryLayers.working });
+      layersIncluded.push('working_memory');
+    }
+
+    if (memoryLayers.recent) {
+      layers.push({ name: 'recent_memory', content: memoryLayers.recent });
+      layersIncluded.push('recent_memory');
+    }
+
     const latestSummary = conversation.summaries[0];
     const summaryUsed = !!latestSummary;
     if (latestSummary) {
@@ -83,33 +105,26 @@ export class ContextService {
       layersIncluded.push('summary');
     }
 
-    const rawMemories = await this.retrieval.searchRelevantMemories(
-      projectId,
-      currentMessage,
-      this.contextConfig.memoryLimit,
-    );
-    const memories = filterDuplicateMemories(projectLayer || '', rawMemories);
-    if (memories.length < rawMemories.length) deduplicated = true;
-
-    if (memories.length) {
-      layers.push({
-        name: 'memories',
-        content: memories
-          .map((m) => `[importância ${m.importance}] ${m.title}: ${m.content}`)
-          .join('\n'),
-      });
+    const consolidatedContent =
+      memoryLayers.consolidated ??
+      (await this.buildLegacyMemoriesLayer(projectId, currentMessage, projectLayer || ''));
+    if (consolidatedContent) {
+      layers.push({ name: 'memories', content: consolidatedContent });
       layersIncluded.push('memories');
     }
 
     const useRag =
       !this.contextConfig.skipRagForCasual || shouldSearchRag(currentMessage);
     let ragChunks: string[] = [];
+    let ragMs = 0;
     if (useRag) {
+      const ragStarted = Date.now();
       ragChunks = await this.retrieval.searchRelevantChunks(
         projectId,
         currentMessage,
         this.contextConfig.ragChunkLimit,
       );
+      ragMs = Date.now() - ragStarted;
     } else {
       ragSkipped = true;
     }
@@ -131,6 +146,11 @@ export class ContextService {
     if (mediaContext) {
       layers.push({ name: 'media', content: mediaContext });
       layersIncluded.push('media');
+    }
+
+    if (memoryLayers.deep) {
+      layers.push({ name: 'deep_memory', content: memoryLayers.deep });
+      layersIncluded.push('deep_memory');
     }
 
     const maxToolOutput =
@@ -197,13 +217,16 @@ export class ContextService {
             systemContent + rebuilt.map((m) => m.content).join(''),
           ),
           summaryUsed,
-          memoriesCount: memories.length,
+          memoriesCount: consolidatedContent ? consolidatedContent.split('\n').length : 0,
           ragChunksCount: ragChunks.length,
           toolResultsCount: conversation.toolCalls.filter((t) => t.result).length,
           recentMessagesCount: msgTrim.messages.length,
           truncatedForBudget,
           ragSkipped,
           deduplicated,
+          deepMemorySkipped,
+          memoryMs,
+          ragMs,
         },
       );
     }
@@ -212,16 +235,36 @@ export class ContextService {
       layersIncluded,
       estimatedTokens: totalTokens,
       summaryUsed,
-      memoriesCount: memories.length,
+      memoriesCount: consolidatedContent ? consolidatedContent.split('\n').length : 0,
       ragChunksCount: ragChunks.length,
       toolResultsCount: conversation.toolCalls.filter((t) => t.result).length,
       recentMessagesCount: recentMessages.length,
       truncatedForBudget: truncatedForBudget || undefined,
       ragSkipped: ragSkipped || undefined,
+      deepMemorySkipped: deepMemorySkipped || undefined,
       deduplicated: deduplicated || undefined,
+      memoryMs,
+      ragMs: ragMs || undefined,
     };
 
     return { systemContent, messages, metadata };
+  }
+
+  private async buildLegacyMemoriesLayer(
+    projectId: string,
+    currentMessage: string,
+    projectLayer: string,
+  ): Promise<string | null> {
+    const rawMemories = await this.retrieval.searchRelevantMemories(
+      projectId,
+      currentMessage,
+      this.contextConfig.memoryLimit,
+    );
+    const memories = filterDuplicateMemories(projectLayer, rawMemories);
+    if (!memories.length) return null;
+    return memories
+      .map((m) => `[importância ${m.importance}] ${m.title}: ${m.content}`)
+      .join('\n');
   }
 
   private finalize(
@@ -312,10 +355,13 @@ export class ContextService {
     const sectionTitles: Record<string, string> = {
       system: 'Instruções do Sistema',
       project: 'Configuração do Projeto',
+      working_memory: 'Memória de Trabalho',
+      recent_memory: 'Memória Recente',
       summary: 'Resumo da Conversa',
       memories: 'Memórias Relevantes',
       rag: 'Conhecimento do Projeto',
       media: 'Contexto de Mídia (Imagens)',
+      deep_memory: 'Memória Profunda',
       tool_results: 'Resultados Recentes de Tools',
     };
 

@@ -1,16 +1,33 @@
 import hashlib
 import re
+import time
 from pathlib import Path
 
 from PIL import Image
 
-from app.config import GENERATE_THUMBNAILS, STORAGE_ROOT
-from app.schemas.image_result import ImageProcessingResult, LayoutBlock, OcrBlock
-
-try:
-    import pytesseract
-except ImportError:  # pragma: no cover
-    pytesseract = None
+from app.config import (
+    GENERATE_THUMBNAILS,
+    MAX_BYTES,
+    MAX_HEIGHT,
+    MAX_WIDTH,
+    OCR_LANGUAGES,
+    STORAGE_ROOT,
+    THUMBNAIL_FORMAT,
+    ENABLE_TESSERACT_FALLBACK,
+)
+from app.providers.document.docling_provider import DoclingProvider
+from app.providers.layout.paddle_structure_provider import PaddleStructureProvider
+from app.providers.ocr.paddleocr_provider import PaddleOCRProvider
+from app.providers.ocr.tesseract_provider import TesseractProvider
+from app.providers.vision.ollama_vision_provider import OllamaVisionProvider
+from app.schemas.image_result import (
+    ImageMetadata,
+    ImageProcessingResult,
+    PerformanceInfo,
+    ProcessCapabilities,
+    ProcessRequest,
+    ProviderInfo,
+)
 
 
 def _sha256_file(path: Path) -> str:
@@ -21,151 +38,229 @@ def _sha256_file(path: Path) -> str:
     return h.hexdigest()
 
 
-def _detect_image_type(ocr_text: str) -> str:
+def _detect_image_type(ocr_text: str, vision_hint: str | None = None) -> str:
+    if vision_hint and vision_hint != 'unknown':
+        return vision_hint
     lower = ocr_text.lower()
     if re.search(r'error|exception|traceback|failed', lower):
         return 'error_screenshot'
-    if re.search(r'button|menu|settings|dashboard|ui', lower):
+    if re.search(r'button|menu|settings|dashboard|ui|sidebar', lower):
         return 'ui_screenshot'
-    if re.search(r'diagram|flowchart|sequence', lower):
+    if re.search(r'diagram|flowchart|sequence|architecture', lower):
         return 'diagram'
+    if re.search(r'def |class |import |function ', lower):
+        return 'code_screenshot'
     if len(ocr_text) > 400:
-        return 'scanned_document'
+        return 'document_scan'
     if re.search(r'chart|table|graph', lower):
-        return 'chart_table'
+        return 'chart'
     if ocr_text.strip():
         return 'ui_screenshot'
     return 'photo'
 
 
-def _extract_tags(text: str) -> list[str]:
+def _extract_tags(text: str, extra: list[str] | None = None) -> list[str]:
     words = re.findall(r'[A-Za-z][A-Za-z0-9_-]{2,}', text)
     seen: set[str] = set()
     tags: list[str] = []
-    for w in words[:30]:
+    for w in ([*(extra or [])] + words[:30]):
         k = w.lower()
         if k not in seen:
             seen.add(k)
             tags.append(k)
-    return tags[:12]
+    return tags[:15]
 
 
-def _run_ocr(image: Image.Image, mode: str) -> tuple[str, list[OcrBlock], str]:
-    if pytesseract is None:
-        return '', [], 'disabled'
-
-    lang = 'por+eng' if mode != 'fast' else 'eng'
-    try:
-        data = pytesseract.image_to_data(image, lang=lang, output_type=pytesseract.Output.DICT)
-        blocks: list[OcrBlock] = []
-        lines: list[str] = []
-        n = len(data.get('text', []))
-        for i in range(n):
-            text = (data['text'][i] or '').strip()
-            conf = float(data['conf'][i]) if data['conf'][i] != '-1' else 0.0
-            if not text or conf < 40:
-                continue
-            x, y, w, h = data['left'][i], data['top'][i], data['width'][i], data['height'][i]
-            blocks.append(OcrBlock(text=text, bbox=[x, y, x + w, y + h], confidence=conf / 100))
-            lines.append(text)
-        full = '\n'.join(lines)
-        return full, blocks, 'tesseract'
-    except Exception:
-        try:
-            full = pytesseract.image_to_string(image)
-            return full.strip(), [], 'tesseract'
-        except Exception:
-            return '', [], 'tesseract-failed'
+def _build_cache_key(meta: ImageMetadata, mode: str, providers: ProviderInfo) -> str:
+    raw = f"{meta.sha256}:{mode}:{providers.ocr}:{providers.layout}:{providers.document}:{providers.vision}"
+    return hashlib.sha256(raw.encode()).hexdigest()[:32]
 
 
-def _layout_from_ocr(blocks: list[OcrBlock]) -> list[LayoutBlock]:
-    layout: list[LayoutBlock] = []
-    for b in blocks[:20]:
-        block_type = 'error_message' if re.search(r'error|exception', b.text, re.I) else 'paragraph'
-        layout.append(
-            LayoutBlock(type=block_type, content=b.text, bbox=b.bbox, confidence=b.confidence)
-        )
-    return layout
-
-
-def process_image(
-    media_id: str,
-    original_path: str,
-    project_id: str,
-    mode: str = 'balanced',
-    enable_vlm: bool = False,
-) -> ImageProcessingResult:
-    path = Path(original_path)
-    if not path.is_file():
-        raise FileNotFoundError(f'Image not found: {original_path}')
-
+def _run_ocr(image: Image.Image, mode: str) -> tuple[dict, list[str], int, str]:
     warnings: list[str] = []
+    paddle = PaddleOCRProvider()
+    tesseract = TesseractProvider()
+
+    if mode != 'fast' and paddle.is_enabled() and paddle.is_available():
+        result = paddle.process(image, mode, OCR_LANGUAGES)
+        if result.data.get('fullText') or result.data.get('blocks'):
+            warnings.extend(result.warnings)
+            return result.data, warnings, result.duration_ms, result.provider
+
+        warnings.append('PaddleOCR returned empty result; falling back to Tesseract')
+        warnings.extend(result.warnings)
+
+    if ENABLE_TESSERACT_FALLBACK or mode == 'fast':
+        result = tesseract.process(image, mode, OCR_LANGUAGES)
+        warnings.extend(result.warnings)
+        return result.data, warnings, result.duration_ms, result.provider
+
+    return {'fullText': '', 'blocks': [], 'language': OCR_LANGUAGES}, warnings, 0, 'disabled'
+
+
+def process_image_request(req: ProcessRequest) -> ImageProcessingResult:
+    started_total = time.time()
+    path = Path(req.originalPath)
+    if not path.is_file():
+        raise FileNotFoundError(f'Image not found: {req.originalPath}')
+
+    stat = path.stat()
+    if stat.st_size > MAX_BYTES:
+        raise ValueError(f'Image exceeds max size ({MAX_BYTES} bytes)')
+
+    caps = req.requestedCapabilities or ProcessCapabilities()
+    warnings: list[str] = []
+    perf = PerformanceInfo()
+
     with Image.open(path) as img:
         img = img.convert('RGB')
         width, height = img.size
+        if width > MAX_WIDTH or height > MAX_HEIGHT:
+            raise ValueError(f'Image dimensions exceed limit ({MAX_WIDTH}x{MAX_HEIGHT})')
+
         fmt = (img.format or path.suffix.replace('.', '') or 'unknown').lower()
         sha = _sha256_file(path)
+        meta = ImageMetadata(
+            width=width,
+            height=height,
+            format=fmt,
+            sizeBytes=stat.st_size,
+            sha256=sha,
+        )
 
         thumbnail_path = None
         if GENERATE_THUMBNAILS:
-            thumb_dir = Path(STORAGE_ROOT) / 'images' / 'thumbnails' / project_id
+            thumb_dir = Path(STORAGE_ROOT) / 'images' / 'thumbnails' / req.projectId
             thumb_dir.mkdir(parents=True, exist_ok=True)
-            thumb_path = thumb_dir / f'{media_id}.jpg'
+            ext = 'webp' if THUMBNAIL_FORMAT == 'webp' else 'jpg'
+            thumb_path = thumb_dir / f'{req.mediaId}.{ext}'
             thumb = img.copy()
             thumb.thumbnail((320, 320))
-            thumb.save(thumb_path, format='JPEG', quality=85)
+            save_fmt = 'WEBP' if ext == 'webp' else 'JPEG'
+            thumb.save(thumb_path, format=save_fmt, quality=85)
             thumbnail_path = str(thumb_path)
 
-        full_text, ocr_blocks, ocr_provider = _run_ocr(img, mode)
-        if not full_text:
-            warnings.append('OCR returned no text; image may be photo-only or low contrast.')
+        ocr_data, ocr_warnings, perf.ocrMs, ocr_provider = _run_ocr(img, req.mode)
+        warnings.extend(ocr_warnings)
+        full_text = ocr_data.get('fullText', '')
+        ocr_blocks = ocr_data.get('blocks', [])
+
+        layout_provider_name = 'disabled'
+        layout_blocks: list[dict] = []
+        if caps.layout and req.mode != 'fast':
+            layout_engine = PaddleStructureProvider()
+            layout_result = layout_engine.process(img, ocr_blocks, req.mode)
+            layout_blocks = layout_result.data.get('blocks', [])
+            layout_provider_name = layout_result.provider
+            perf.layoutMs = layout_result.duration_ms
+            warnings.extend(layout_result.warnings)
+        elif ocr_blocks:
+            from app.providers.layout.paddle_structure_provider import HeuristicLayoutProvider
+            layout_result = HeuristicLayoutProvider().process_from_ocr_blocks(ocr_blocks)
+            layout_blocks = layout_result.data.get('blocks', [])
+            layout_provider_name = layout_result.provider
+
+        vision_data = {
+            'provider': 'disabled',
+            'enabled': False,
+            'summary': None,
+            'objects': [],
+            'uiElements': [],
+            'relationships': [],
+        }
+        vision_provider_name = 'disabled'
+        vision_hint = None
+
+        document_data = {'markdown': None, 'tables': []}
+        document_provider_name = 'skipped'
 
         image_type = _detect_image_type(full_text)
-        layout_blocks = _layout_from_ocr(ocr_blocks)
-        tags = _extract_tags(full_text)
 
-        summary = full_text[:240].strip() if full_text else f'Image ({image_type}) without readable text.'
+        if caps.document and req.mode == 'full':
+            doc_engine = DoclingProvider()
+            if doc_engine.should_run(image_type, req.mode):
+                doc_result = doc_engine.process(path, image_type, req.mode)
+                document_data = doc_result.data
+                document_provider_name = doc_result.provider
+                perf.documentMs = doc_result.duration_ms
+                warnings.extend(doc_result.warnings)
+
+        enable_vlm = req.enableVlm or (caps.vision is True) or (caps.vision == 'auto')
+        if enable_vlm:
+            vlm = OllamaVisionProvider()
+            force = caps.vision is True or req.enableVlm
+            vlm_result = vlm.process(img, image_type, full_text, req.mode, force=force)
+            perf.visionMs = vlm_result.duration_ms
+            warnings.extend(vlm_result.warnings)
+            vision_provider_name = vlm_result.provider
+            if vlm_result.data.get('enabled'):
+                vision_data = {
+                    'provider': vlm_result.provider,
+                    'enabled': True,
+                    'summary': vlm_result.data.get('summary'),
+                    'objects': vlm_result.data.get('objects', []),
+                    'uiElements': vlm_result.data.get('uiElements', []),
+                    'relationships': vlm_result.data.get('relationships', []),
+                }
+                vision_hint = vlm_result.data.get('imageTypeHint')
+                image_type = _detect_image_type(full_text, vision_hint)
+
+        tags = _extract_tags(full_text, vision_data.get('objects', []))
+        entities = [t for t in tags if t[0].isupper()] if tags else []
+
+        summary_parts = []
+        if full_text:
+            summary_parts.append(full_text[:240].strip())
+        elif vision_data.get('summary'):
+            summary_parts.append(str(vision_data['summary'])[:240])
+        else:
+            summary_parts.append(f'Image ({image_type}) without readable text.')
+
         if image_type == 'error_screenshot' and full_text:
-            summary = 'Screenshot showing an error message. ' + summary[:180]
+            summary = 'Screenshot showing an error message. ' + summary_parts[0][:180]
+        else:
+            summary = summary_parts[0]
 
-        vision_enabled = enable_vlm
-        if vision_enabled:
-            warnings.append('VLM requested but not installed in this worker build.')
+        providers = ProviderInfo(
+            ocr=ocr_provider,
+            layout=layout_provider_name,
+            document=document_provider_name,
+            vision=vision_provider_name,
+        )
+
+        provider_versions = {
+            'ocr': ocr_provider,
+            'layout': layout_provider_name,
+            'document': document_provider_name,
+            'vision': vision_provider_name,
+        }
+
+        perf.totalMs = int((time.time() - started_total) * 1000)
 
         return ImageProcessingResult(
-            mediaId=media_id,
+            mediaId=req.mediaId,
             imageType=image_type,
-            processingMode=mode,
-            metadata={
-                'width': width,
-                'height': height,
-                'format': fmt,
-                'sizeBytes': path.stat().st_size,
-                'sha256': sha,
-            },
+            processingMode=req.mode,
+            providers=providers,
+            providerVersions=provider_versions,
+            metadata=meta,
             ocr={
                 'provider': ocr_provider,
-                'language': ['pt', 'en'] if mode != 'fast' else ['en'],
+                'language': ocr_data.get('language', OCR_LANGUAGES),
                 'fullText': full_text,
-                'blocks': [b.model_dump() for b in ocr_blocks],
+                'blocks': ocr_blocks,
             },
-            layout={
-                'provider': 'heuristic-ocr' if layout_blocks else 'disabled',
-                'blocks': [b.model_dump() for b in layout_blocks],
-            },
-            vision={
-                'provider': 'disabled',
-                'enabled': False,
-                'summary': None,
-                'objects': [],
-                'uiElements': [],
-            },
+            layout={'provider': layout_provider_name, 'blocks': layout_blocks},
+            document=document_data,
+            vision=vision_data,
             semantic={
                 'summary': summary,
                 'tags': tags,
-                'entities': [t for t in tags if t[0].isupper()] if tags else [],
+                'entities': entities,
                 'possibleIntent': 'debugging' if image_type == 'error_screenshot' else 'unknown',
             },
             warnings=warnings,
+            performance=perf,
             thumbnailPath=thumbnail_path,
+            cacheKey=_build_cache_key(meta, req.mode, providers),
         )

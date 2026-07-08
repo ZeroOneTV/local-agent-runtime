@@ -8,6 +8,7 @@ import {
   truncateToolOutput,
 } from './tools.types';
 import { ArtifactsService } from '../storage/artifacts.service';
+import { PerformanceConfigService } from '../runtime/performance.config';
 
 @Injectable()
 export class ToolExecutionService {
@@ -15,6 +16,7 @@ export class ToolExecutionService {
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
     private readonly artifacts: ArtifactsService,
+    private readonly perf: PerformanceConfigService,
   ) {}
 
   async createCall(
@@ -45,7 +47,11 @@ export class ToolExecutionService {
     result: StructuredToolResult,
     executionTimeMs: number,
   ) {
-    const maxChars = this.config.get<number>('tools.maxOutputChars') ?? 4000;
+    const maxKb = this.perf.toolResultInlineMaxKb;
+    const maxChars = Math.min(
+      this.config.get<number>('tools.maxOutputChars') ?? 4000,
+      maxKb * 1024,
+    );
     const fullJson = JSON.stringify(result, null, 2);
     const output = truncateToolOutput(result, maxChars);
 

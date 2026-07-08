@@ -50,8 +50,17 @@ export class MediaController {
   }
 
   @Get(':id')
-  getResult(@Param('id') id: string) {
-    return this.media.getResult(id);
+  getResult(
+    @Param('id') id: string,
+    @Query('includeRawJson') includeRawJson?: string,
+    @Query('includeMarkdown') includeMarkdown?: string,
+    @Query('includeBlocks') includeBlocks?: string,
+  ) {
+    return this.media.getResult(id, {
+      includeRawJson: includeRawJson !== 'false',
+      includeMarkdown: includeMarkdown === 'true',
+      includeBlocks: includeBlocks === 'true',
+    });
   }
 
   @Get()

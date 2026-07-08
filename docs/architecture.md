@@ -31,6 +31,6 @@ O Open WebUI **não** deve conversar diretamente com o Ollama. O backend é o ce
 ## Stack
 
 - NestJS, Prisma, PostgreSQL, pgvector
-- Open WebUI como frontend
+- Open WebUI como interface de chat
 - Cognitive Orchestrator para decisões de fluxo
 - Context Engine com 8 camadas de contexto

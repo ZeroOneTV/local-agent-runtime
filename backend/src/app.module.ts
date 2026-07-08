@@ -18,6 +18,12 @@ import { JobsModule } from './jobs/jobs.module';
 import { MediaModule } from './media/media.module';
 import { HealthModule } from './health/health.module';
 import { StorageModule } from './storage/storage.module';
+import { MemoryStratificationModule } from './memory-stratification/memory-stratification.module';
+import { RuntimeModule } from './runtime/runtime.module';
+import { ProcessorsModule } from './runtime/processors.module';
+import { shouldRunAnyProcessor } from './runtime/app-role.util';
+
+const processorImports = shouldRunAnyProcessor() ? [ProcessorsModule] : [];
 
 @Module({
   imports: [
@@ -47,6 +53,9 @@ import { StorageModule } from './storage/storage.module';
     MediaModule,
     HealthModule,
     StorageModule,
+    MemoryStratificationModule,
+    RuntimeModule,
+    ...processorImports,
   ],
 })
 export class AppModule {}

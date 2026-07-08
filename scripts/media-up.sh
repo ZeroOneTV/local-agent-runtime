@@ -3,9 +3,9 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-PROFILES="media"
+PROFILES="media,workers"
 if [[ "${WITH_OPENWEBUI:-}" == "1" ]]; then
-  PROFILES="media,openwebui"
+  PROFILES="media,openwebui,workers"
 fi
 
 echo "==> Subindo stack com media-worker (profiles: ${PROFILES})..."

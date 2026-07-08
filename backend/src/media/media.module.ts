@@ -9,7 +9,6 @@ import { MediaRagService } from './media-rag.service';
 import { MediaEventService } from './media-event.service';
 import { MediaConfigService } from './media.config';
 import { MediaWorkerClient } from './media-worker.client';
-import { MediaProcessingProcessor } from './media-processing.processor';
 import { ImageProcessor } from './processors/image.processor';
 import { RagModule } from '../rag/rag.module';
 import { OrchestratorModule } from '../orchestrator/orchestrator.module';
@@ -31,7 +30,6 @@ import { OrchestratorModule } from '../orchestrator/orchestrator.module';
     MediaProcessingService,
     MediaService,
     ImageProcessor,
-    MediaProcessingProcessor,
   ],
   exports: [MediaService, MediaProcessingService, MediaContextService, ImageProcessor],
 })

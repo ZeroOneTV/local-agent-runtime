@@ -16,7 +16,10 @@ export interface ContextMetadata {
   recentMessagesCount: number;
   truncatedForBudget?: boolean;
   ragSkipped?: boolean;
+  deepMemorySkipped?: boolean;
   deduplicated?: boolean;
+  memoryMs?: number;
+  ragMs?: number;
 }
 
 export interface BuiltContext {

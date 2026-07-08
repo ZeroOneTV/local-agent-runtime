@@ -1,0 +1,4 @@
+# Optional — prefer OllamaVisionProvider via HTTP instead
+torch>=2.0.0
+transformers>=4.45.0
+accelerate>=0.34.0

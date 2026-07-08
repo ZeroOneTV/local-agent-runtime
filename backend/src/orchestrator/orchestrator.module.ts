@@ -17,9 +17,17 @@ import { LlmModule } from '../llm/llm.module';
 import { ConversationsModule } from '../conversations/conversations.module';
 import { ToolsModule } from '../tools/tools.module';
 import { JobsModule } from '../jobs/jobs.module';
+import { MemoryStratificationModule } from '../memory-stratification/memory-stratification.module';
 
 @Module({
-  imports: [ContextModule, LlmModule, forwardRef(() => ConversationsModule), ToolsModule, forwardRef(() => JobsModule)],
+  imports: [
+    ContextModule,
+    LlmModule,
+    forwardRef(() => ConversationsModule),
+    ToolsModule,
+    forwardRef(() => JobsModule),
+    MemoryStratificationModule,
+  ],
   controllers: [OrchestratorController, WebhookController],
   providers: [
     OrchestratorConfigService,

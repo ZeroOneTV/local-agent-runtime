@@ -2,22 +2,17 @@
 node_modules/
 .next/
 dist/
+coverage/
+*.tsbuildinfo
 
 # Environment
 .env
 .env.local
 .env.*.local
 
-# Storage (keep structure, ignore runtime contents)
-storage/uploads/*
-storage/projects/*
-storage/generated/*
-storage/temp/*
-storage/media/images/originals/*
-storage/media/images/thumbnails/*
-storage/media/images/processed/*
-storage/media/images/contexts/*
-storage/artifacts/*
+# Storage (keep directory tree via .gitkeep, ignore runtime contents)
+storage/**
+!storage/**/
 !storage/**/.gitkeep
 
 # Python (media-worker)
@@ -46,9 +41,14 @@ redis_data/
 qdrant_data/
 open_webui_data/
 
-# Prisma
-backend/prisma/migrations/**/migration_lock.toml
-
 # Logs
 *.log
 npm-debug.log*
+
+# Design specs removidos do repo (conteúdo consolidado no README)
+mds/
+
+# Planos de implementação locais (não versionar)
+media-pipeline-quality-upgrade.md
+project-optimization-plan.md
+11-runtime-performance-and-resource-optimization.md

@@ -10,8 +10,11 @@ export type ProcessingMode = 'fast' | 'balanced' | 'full';
 export type ImageType =
   | 'error_screenshot'
   | 'ui_screenshot'
+  | 'code_screenshot'
   | 'diagram'
+  | 'document_scan'
   | 'scanned_document'
+  | 'chart'
   | 'chart_table'
   | 'photo'
   | 'unknown';
@@ -29,11 +32,36 @@ export interface MediaLayoutBlockDto {
   confidence?: number;
 }
 
+export interface MediaProvidersDto {
+  ocr: string;
+  layout: string;
+  document: string;
+  vision: string;
+}
+
+export interface MediaPerformanceDto {
+  totalMs?: number;
+  ocrMs?: number;
+  layoutMs?: number;
+  documentMs?: number;
+  visionMs?: number;
+}
+
+export interface ProcessCapabilitiesDto {
+  ocr?: boolean;
+  layout?: boolean;
+  document?: boolean | 'auto';
+  vision?: boolean | 'auto';
+}
+
 export interface ImageProcessingResultDto {
   mediaId: string;
   type: 'image';
-  imageType: ImageType;
+  imageType: ImageType | string;
   processingMode: ProcessingMode;
+  providers?: MediaProvidersDto;
+  providerVersions?: Record<string, string>;
+  cacheKey?: string;
   metadata: {
     width: number;
     height: number;
@@ -51,12 +79,17 @@ export interface ImageProcessingResultDto {
     provider: string;
     blocks: MediaLayoutBlockDto[];
   };
+  document?: {
+    markdown: string | null;
+    tables: string[];
+  };
   vision: {
     provider: string;
     enabled: boolean;
     summary: string | null;
     objects: string[];
     uiElements: string[];
+    relationships?: string[];
   };
   semantic: {
     summary: string;
@@ -65,6 +98,7 @@ export interface ImageProcessingResultDto {
     possibleIntent: string;
   };
   warnings: string[];
+  performance?: MediaPerformanceDto;
   thumbnailPath?: string;
 }
 

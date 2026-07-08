@@ -479,6 +479,7 @@ export class ToolRegistryService implements OnModuleInit {
         inputSchema: schema({
           mediaAssetId: { type: 'string', required: true },
           mode: { type: 'string' },
+          enableVlm: { type: 'string' },
         }),
         outputSchema: schema({
           success: { type: 'string' },
@@ -491,8 +492,13 @@ export class ToolRegistryService implements OnModuleInit {
         await this.media.enqueueProcessImage(
           a.mediaAssetId as string,
           a.mode as 'fast' | 'balanced' | 'full' | undefined,
+          undefined,
+          a.enableVlm === 'true',
         );
-        const result = await this.media.getResult(a.mediaAssetId as string);
+        const result = await this.media.getResult(a.mediaAssetId as string, {
+          includeRawJson: false,
+          includeBlocks: false,
+        });
         const dto = result.result as { semantic?: { summary?: string; tags?: string[] } } | null;
         return {
           success: true,
@@ -541,11 +547,18 @@ export class ToolRegistryService implements OnModuleInit {
         async: false,
         inputSchema: schema({
           mediaAssetId: { type: 'string', required: true },
+          includeRawJson: { type: 'string' },
+          includeMarkdown: { type: 'string' },
+          includeBlocks: { type: 'string' },
         }),
         outputSchema: schema({ result: { type: 'string' } }),
       },
       exec(async (a) => {
-        const data = await this.media.getResult(a.mediaAssetId as string);
+        const data = await this.media.getResult(a.mediaAssetId as string, {
+          includeRawJson: a.includeRawJson !== 'false',
+          includeMarkdown: a.includeMarkdown === 'true',
+          includeBlocks: a.includeBlocks === 'true',
+        });
         return { success: true, data };
       }),
     );
