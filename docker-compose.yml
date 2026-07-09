@@ -1,4 +1,6 @@
-x-worker: &worker-base
+name: my_llm
+
+x-worker-base: &worker-base
   build:
     context: ./backend
     dockerfile: Dockerfile
@@ -45,13 +47,12 @@ services:
         condition: service_healthy
       redis:
         condition: service_started
-      media-worker:
-        condition: service_healthy
-        required: false
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:
       - local-ai-network
+    profiles:
+      - docker-backend
 
   worker-all:
     <<: *worker-base
@@ -61,8 +62,6 @@ services:
       - APP_ROLE=worker-all
       - MEDIA_WORKER_URL=http://media-worker:5000
       - MEDIA_STORAGE_ROOT=/storage/media
-    profiles:
-      - workers
 
   worker-orchestrator:
     <<: *worker-base
@@ -169,21 +168,18 @@ services:
       - "${OPENWEBUI_PORT:-3080}:8080"
     volumes:
       - open_webui_data:/app/backend/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       - ENABLE_OLLAMA_API=false
       - ENABLE_OPENAI_API=true
-      - OPENAI_API_BASE_URL=http://backend:3001/v1
+      - OPENAI_API_BASE_URL=${OPENWEBUI_BACKEND_URL:-http://host.docker.internal:3001/v1}
       - OPENAI_API_KEY=${OPENWEBUI_API_KEY:-local-dev-key}
       - WEBUI_NAME=Local AI Assistant
       - ENABLE_SIGNUP=true
       - DEFAULT_MODELS=local-assistant
-    depends_on:
-      backend:
-        condition: service_started
     networks:
       - local-ai-network
-    profiles:
-      - openwebui
 
   media-worker:
     build:
@@ -235,8 +231,6 @@ services:
       start_period: 20s
     networks:
       - local-ai-network
-    profiles:
-      - media
 
 volumes:
   postgres_data:

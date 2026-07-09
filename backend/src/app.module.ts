@@ -21,6 +21,7 @@ import { StorageModule } from './storage/storage.module';
 import { MemoryStratificationModule } from './memory-stratification/memory-stratification.module';
 import { RuntimeModule } from './runtime/runtime.module';
 import { ProcessorsModule } from './runtime/processors.module';
+import { LocalFilesystemModule } from './local-filesystem/local-filesystem.module';
 import { shouldRunAnyProcessor } from './runtime/app-role.util';
 
 const processorImports = shouldRunAnyProcessor() ? [ProcessorsModule] : [];
@@ -55,6 +56,7 @@ const processorImports = shouldRunAnyProcessor() ? [ProcessorsModule] : [];
     StorageModule,
     MemoryStratificationModule,
     RuntimeModule,
+    LocalFilesystemModule,
     ...processorImports,
   ],
 })

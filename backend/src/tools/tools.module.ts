@@ -16,6 +16,7 @@ import { SecurityModule } from '../security/security.module';
 import { MediaModule } from '../media/media.module';
 import { StorageModule } from '../storage/storage.module';
 import { RuntimeModule } from '../runtime/runtime.module';
+import { LocalFilesystemModule } from '../local-filesystem/local-filesystem.module';
 
 @Module({
   imports: [
@@ -26,6 +27,7 @@ import { RuntimeModule } from '../runtime/runtime.module';
     MediaModule,
     StorageModule,
     RuntimeModule,
+    LocalFilesystemModule,
   ],
   controllers: [ToolsController],
   providers: [

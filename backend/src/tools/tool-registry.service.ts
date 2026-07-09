@@ -21,6 +21,14 @@ function schema(props: Record<string, JsonSchemaProperty>): Record<string, JsonS
   return props;
 }
 
+function fsCtx(c: ToolExecutionContext) {
+  return {
+    projectId: c.projectId,
+    conversationId: c.conversationId,
+    approved: c.approved,
+  };
+}
+
 @Injectable()
 export class ToolRegistryService implements OnModuleInit {
   private definitions = new Map<string, ToolDefinition>();
@@ -89,7 +97,7 @@ export class ToolRegistryService implements OnModuleInit {
     this.register(
       {
         name: 'read_file',
-        description: 'Lê o conteúdo de um arquivo dentro do projeto.',
+        description: 'Lê o conteúdo de um arquivo (projeto ou path absoluto do host).',
         category: 'filesystem',
         kind: 'readonly',
         riskLevel: 'low',
@@ -98,13 +106,13 @@ export class ToolRegistryService implements OnModuleInit {
         inputSchema: schema({ path: { type: 'string', required: true, description: 'Caminho relativo' } }),
         outputSchema: schema({ path: { type: 'string' }, content: { type: 'string' } }),
       },
-      exec((a, c) => this.fs.readFile(c.rootPath, a.path as string)),
+      exec((a, c) => this.fs.readFile(c.rootPath, a.path as string, fsCtx(c))),
     );
 
     this.register(
       {
         name: 'list_directory',
-        description: 'Lista arquivos e pastas de um diretório.',
+        description: 'Lista arquivos e pastas (projeto ou path absoluto do host).',
         category: 'filesystem',
         kind: 'readonly',
         riskLevel: 'low',
@@ -113,13 +121,30 @@ export class ToolRegistryService implements OnModuleInit {
         inputSchema: schema({ path: { type: 'string', description: 'Caminho relativo' } }),
         outputSchema: schema({ entries: { type: 'string' } }),
       },
-      exec((a, c) => this.fs.listDirectory(c.rootPath, (a.path as string) || '.')),
+      exec((a, c) =>
+        this.fs.listDirectory(c.rootPath, (a.path as string) || '.', fsCtx(c)),
+      ),
+    );
+
+    this.register(
+      {
+        name: 'stat',
+        description: 'Retorna metadados de um arquivo ou diretório.',
+        category: 'filesystem',
+        kind: 'readonly',
+        riskLevel: 'low',
+        requiresApproval: false,
+        async: false,
+        inputSchema: schema({ path: { type: 'string', required: true } }),
+        outputSchema: schema({ type: { type: 'string' }, size: { type: 'string' } }),
+      },
+      exec((a, c) => this.fs.stat(c.rootPath, a.path as string, fsCtx(c))),
     );
 
     this.register(
       {
         name: 'search_files',
-        description: 'Busca texto nos arquivos do projeto.',
+        description: 'Busca texto nos arquivos do projeto ou path do host.',
         category: 'filesystem',
         kind: 'readonly',
         riskLevel: 'low',
@@ -132,7 +157,12 @@ export class ToolRegistryService implements OnModuleInit {
         outputSchema: schema({ matches: { type: 'string' } }),
       },
       exec((a, c) =>
-        this.fs.searchFiles(c.rootPath, a.query as string, a.path as string),
+        this.fs.searchFiles(
+          c.rootPath,
+          a.query as string,
+          a.path as string,
+          fsCtx(c),
+        ),
       ),
     );
 
@@ -152,7 +182,12 @@ export class ToolRegistryService implements OnModuleInit {
         outputSchema: schema({ written: { type: 'string' } }),
       },
       exec((a, c) =>
-        this.fs.writeFile(c.rootPath, a.path as string, a.content as string),
+        this.fs.writeFile(
+          c.rootPath,
+          a.path as string,
+          a.content as string,
+          fsCtx(c),
+        ),
       ),
     );
 
@@ -172,7 +207,12 @@ export class ToolRegistryService implements OnModuleInit {
         outputSchema: schema({ written: { type: 'string' } }),
       },
       exec((a, c) =>
-        this.fs.applyPatch(c.rootPath, a.path as string, a.content as string),
+        this.fs.applyPatch(
+          c.rootPath,
+          a.path as string,
+          a.content as string,
+          fsCtx(c),
+        ),
       ),
     );
 
@@ -188,7 +228,7 @@ export class ToolRegistryService implements OnModuleInit {
         inputSchema: schema({ path: { type: 'string', required: true } }),
         outputSchema: schema({ deleted: { type: 'string' } }),
       },
-      exec((a, c) => this.fs.deleteFile(c.rootPath, a.path as string)),
+      exec((a, c) => this.fs.deleteFile(c.rootPath, a.path as string, fsCtx(c))),
     );
 
     // Git
@@ -642,7 +682,12 @@ export class ToolRegistryService implements OnModuleInit {
         outputSchema: schema({ matches: { type: 'string' } }),
       },
       exec((a, c) =>
-        this.fs.searchFiles(c.rootPath, a.query as string, a.path as string),
+        this.fs.searchFiles(
+          c.rootPath,
+          a.query as string,
+          a.path as string,
+          fsCtx(c),
+        ),
       ),
     );
   }

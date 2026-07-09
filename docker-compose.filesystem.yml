@@ -1,0 +1,11 @@
+# Override opcional para montar pastas do host no Docker.
+# Uso: docker compose -f docker-compose.yml -f docker-compose.filesystem.yml up -d
+services:
+  backend:
+    volumes:
+      - ${HOST_HOME:-/home/zero}:/host/home:ro
+      - ${HOST_AI_WORKSPACE:-/home/zero/AI-Workspace}:/host/ai-workspace:rw
+  worker-all:
+    volumes:
+      - ${HOST_HOME:-/home/zero}:/host/home:ro
+      - ${HOST_AI_WORKSPACE:-/home/zero/AI-Workspace}:/host/ai-workspace:rw

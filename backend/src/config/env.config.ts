@@ -154,4 +154,37 @@ export const envConfig = () => ({
     ),
     ragTopK: parseInt(process.env.RAG_TOP_K || process.env.CONTEXT_RAG_CHUNK_LIMIT || '5', 10),
   },
+  hostFilesystem: {
+    enabled: process.env.HOST_FILESYSTEM_ENABLED === 'true',
+    mode: process.env.HOST_FILESYSTEM_MODE || 'disabled',
+    allowBrowse: process.env.HOST_FILESYSTEM_ALLOW_BROWSE !== 'false',
+    allowRead: process.env.HOST_FILESYSTEM_ALLOW_READ !== 'false',
+    allowWrite: process.env.HOST_FILESYSTEM_ALLOW_WRITE === 'true',
+    requireApprovalForWrite:
+      process.env.HOST_FILESYSTEM_REQUIRE_APPROVAL_FOR_WRITE !== 'false',
+    requireApprovalForDelete:
+      process.env.HOST_FILESYSTEM_REQUIRE_APPROVAL_FOR_DELETE !== 'false',
+    blockSensitivePaths: process.env.HOST_FILESYSTEM_BLOCK_SENSITIVE_PATHS !== 'false',
+    auditEnabled: process.env.HOST_FILESYSTEM_AUDIT_ENABLED !== 'false',
+    allowedDrives: process.env.HOST_FILESYSTEM_ALLOWED_DRIVES || '',
+    defaultAccess: process.env.HOST_FILESYSTEM_DEFAULT_ACCESS || 'read',
+    mounts: parseFilesystemMounts(process.env.HOST_FILESYSTEM_MOUNTS_JSON),
+    hostAgentBaseUrl:
+      process.env.HOST_AGENT_BASE_URL || 'http://host.docker.internal:3847',
+    hostAgentTimeoutMs: parseInt(process.env.HOST_AGENT_TIMEOUT_MS || '30000', 10),
+  },
 });
+
+function parseFilesystemMounts(raw?: string) {
+  if (!raw?.trim()) return [];
+  try {
+    const parsed = JSON.parse(raw) as Array<{
+      hostPrefix: string;
+      containerPrefix: string;
+      access: string;
+    }>;
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}

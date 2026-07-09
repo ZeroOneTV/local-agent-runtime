@@ -3,23 +3,19 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-echo "==> Subindo stack com Open WebUI + workers..."
-docker compose --profile openwebui --profile workers up -d --build
+echo "==> Subindo stack my_llm (Open WebUI + infra)..."
+docker compose up -d postgres redis open-webui media-worker worker-all
 
 echo "==> Aguardando Postgres..."
 sleep 5
 
-echo "==> Rodando migrations..."
-docker compose exec -T backend npx prisma migrate deploy 2>/dev/null || \
-  docker compose exec -T backend npx prisma db push
-
 echo ""
-echo "Stack pronta!"
+echo "Stack pronta (projeto: my_llm)"
 echo "  Open WebUI: http://localhost:${OPENWEBUI_PORT:-3080}"
 echo "  Backend:    http://localhost:3001/health"
-echo "  Aprovações: http://localhost:3001/approvals"
 echo ""
-echo "Configure no Open WebUI (Admin → Connections → OpenAI API):"
-echo "  Base URL: http://backend:3001/v1  (dentro do Docker)"
-echo "  Base URL: http://localhost:3001/v1 (fora do Docker)"
-echo "  API Key:  ${OPENWEBUI_API_KEY:-local-dev-key}"
+echo "Backend no Docker (opcional): docker compose --profile docker-backend up -d backend"
+echo "Backend nativo no Windows: npm run start:dev em backend/"
+echo ""
+echo "Open WebUI aponta para: ${OPENWEBUI_BACKEND_URL:-http://host.docker.internal:3001/v1}"
+echo "API Key: ${OPENWEBUI_API_KEY:-local-dev-key}"

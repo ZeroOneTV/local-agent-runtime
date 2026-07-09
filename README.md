@@ -55,7 +55,7 @@ Este projeto é um **runtime de assistente cognitivo**, não um proxy de chat.
 │  ┌────────┴──────────────────────────────────────────────────────┐   │
 │  │ Docker Compose                                                 │   │
 │  │                                                                │   │
-│  │  Open WebUI :3080 ──► Backend NestJS :3001                     │   │
+│  │  Open WebUI :3080 ──► Backend NestJS :3001 (host ou Docker)    │   │
 │  │                            │                                   │   │
 │  │         Cognitive Orchestrator                               │   │
 │  │              ┌─────────────┼─────────────┐                     │   │
@@ -66,7 +66,8 @@ Este projeto é um **runtime de assistente cognitivo**, não um proxy de chat.
 │  │         PostgreSQL     Redis         storage/                  │   │
 │  │         + pgvector      (working)     (uploads, media, memory) │   │
 │  │                                                                │   │
-│  │  media-worker :5000  ◄── providers OCR/layout/VLM (profile)   │   │
+│  │  media-worker :5000  ◄── providers OCR/layout/VLM              │   │
+│  │  worker-all         ◄── filas BullMQ (index, jobs, memória)    │   │
 │  └────────────────────────────────────────────────────────────────┘   │
 └──────────────────────────────────────────────────────────────────────┘
 ```
@@ -76,11 +77,12 @@ Este projeto é um **runtime de assistente cognitivo**, não um proxy de chat.
 | Componente | Função | Porta |
 |------------|--------|-------|
 | **Open WebUI** | Interface de chat | 3080 |
-| **Backend NestJS** | Orquestrador, API, tools, RAG, mídia, segurança | 3001 |
+| **Backend NestJS** | Orquestrador, API, tools, RAG, mídia, segurança | 3001 (host ou Docker) |
+| **worker-all** | Processa filas BullMQ (indexação, jobs, memória) | — |
 | **PostgreSQL + pgvector** | Dados, embeddings, histórico oficial | 5432 |
 | **Redis + BullMQ** | Filas e jobs assíncronos | 6379 |
 | **Ollama** | LLM local (fora do Docker) | 11434 |
-| **Media Worker** | Pipeline de imagens com providers (profile `media`) | 5000 |
+| **Media Worker** | Pipeline de imagens com providers | 5000 |
 | **Qdrant** | Vetores alternativos (opcional, profile `qdrant`) | 6333 |
 
 ### Stack técnica
@@ -241,22 +243,22 @@ media-worker/
 **Mínimo (Tesseract — leve, padrão do compose):**
 
 ```bash
-docker compose --profile media up -d --build
+docker compose up -d --build
 ```
 
 **Com PaddleOCR + PP-Structure:**
 
 ```bash
 MEDIA_INSTALL_OCR=true MEDIA_ENABLE_PADDLEOCR=true \
-  docker compose --profile media build media-worker
-docker compose --profile media up -d
+  docker compose build media-worker
+docker compose up -d
 ```
 
 **Com Docling (documentos, modo `full`):**
 
 ```bash
 MEDIA_INSTALL_DOCLING=true MEDIA_ENABLE_DOCLING=true \
-  docker compose --profile media build media-worker
+  docker compose build media-worker
 ```
 
 **Com VLM (Ollama nativo no host):**
@@ -355,8 +357,8 @@ ollama pull qwen2.5:7b
 
 Este projeto é **local-first** e **leve por padrão**: usa pouca RAM em idle e escala processamento só quando necessário.
 
-- **API NestJS** (`APP_ROLE=api`) — HTTP, contexto, orquestração; **não** executa jobs pesados
-- **Workers BullMQ** (profile `workers`) — indexação, embeddings, orchestrator, memória, mídia
+- **API NestJS** (`APP_ROLE=api` no host) — HTTP, contexto, orquestração; **não** executa jobs pesados
+- **Workers BullMQ** (`worker-all` no Docker) — indexação, embeddings, orchestrator, memória
 - **Redis** — filas + working memory (maxmemory configurável)
 - **Postgres** — tuning conservador por perfil de RAM
 - **LLM** — fora do Docker (Ollama nativo) para melhor uso de GPU/RAM
@@ -371,7 +373,7 @@ Tarefas CPU-intensivas **não rodam no processo da API**. O backend enfileira e 
 | indexing | `file-index` | `JOBS_INDEXING_CONCURRENCY` |
 | embeddings | `embeddings` | `JOBS_EMBEDDINGS_CONCURRENCY` |
 | memory | `memory-jobs` | `JOBS_MEMORY_CONCURRENCY` |
-| media (Python) | HTTP :5000 | profile `media` |
+| media (Python) | HTTP :5000 | container `media-worker` |
 
 ### Perfis de hardware
 
@@ -392,37 +394,99 @@ curl http://localhost:3001/health/resources
 
 ---
 
+## Acesso ao filesystem local
+
+Por padrão, as tools de filesystem só acessam o `root_path` do projeto (`/storage/projects/...`). Isso é intencional — o assistente não deve ler seu computador inteiro sem configuração explícita.
+
+### Modos suportados
+
+| Modo | Descrição | Melhor para |
+|------|-----------|-------------|
+| `disabled` | Apenas storage do projeto | Máximo isolamento |
+| `docker-mounted` | Pastas do host montadas como volumes Docker | Stack Docker segura |
+| `native` | Backend no host acessa paths reais (`C:\`, `/home/...`) | Desenvolvimento local |
+| `host-agent` | Agente nativo futuro (stub) | Produto avançado |
+
+Arquivos de exemplo: `.env.example.native`, `.env.example.docker-mounted`, `.env.example.filesystem-safe`.
+
+### Docker-mounted (recomendado com Docker)
+
+Monte pastas específicas (evite drive inteiro com escrita):
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.filesystem.yml up -d
+```
+
+Configure `HOST_FILESYSTEM_MOUNTS_JSON` para mapear host → container:
+
+```text
+/home/zero/Documents  →  /host/home/Documents
+```
+
+Teste de acesso:
+
+```bash
+curl -X POST http://localhost:3001/filesystem/test-access \
+  -H 'Content-Type: application/json' \
+  -d '{"path":"/home/zero","operation":"list"}'
+```
+
+### Segurança
+
+- Leitura ampla pode ser permitida em paths não sensíveis
+- **Escrita e deleção exigem aprovação** por padrão (`HOST_FILESYSTEM_REQUIRE_APPROVAL_FOR_WRITE=true`)
+- Paths sensíveis bloqueados: `.env`, `.ssh`, `AppData`, `/etc`, etc.
+
+API: `GET /filesystem/mode`, `POST /filesystem/test-access`, `GET /filesystem/permissions`
+
+---
+
 ## Início rápido
 
-### 1. Configurar ambiente
+### Cenário recomendado: backend no Windows + infra no Docker
+
+**1. Docker (projeto `my_llm`):**
 
 ```bash
 cp .env.example .env
+./scripts/native-up.sh
+# ou: docker compose up -d --build
 ```
 
-### 2. Subir a stack
+Sobe: postgres, redis, open-webui, media-worker, worker-all.
+
+**2. Backend no Windows** (`backend/`):
 
 ```bash
-# Recomendado: Open WebUI + workers + mídia
-docker compose --profile openwebui --profile workers --profile media up -d --build
-
-# Ou via scripts (já incluem workers):
-./scripts/openwebui-up.sh
-WITH_OPENWEBUI=1 ./scripts/media-up.sh
+copy .env.example.windows-native .env
+npm install
+npx prisma generate
+npx prisma migrate deploy
+npm run start:dev
 ```
 
-> Com `APP_ROLE=api` no backend (padrão Docker), jobs BullMQ exigem o profile **`workers`**. Para dev local em um único processo, use `APP_ROLE=all-in-one` no `.env`.
+Use `APP_ROLE=api` no `.env` do backend (workers rodam no Docker).  
+Open WebUI aponta para `http://host.docker.internal:3001/v1`.
 
-### 3. Migrations e seed
+### Cenário alternativo: tudo no Docker
 
 ```bash
-./scripts/db-migrate.sh
-./scripts/seed.sh
+cp .env.example .env
+docker compose up -d --build
+docker compose --profile docker-backend up -d backend
 ```
 
-> **Após rebuild com código novo:** se o backend não subir, rode dentro do container:
-> `docker compose exec backend npm install && docker compose exec backend npx prisma generate`
-> Depois reinicie: `docker compose restart backend`
+### Scripts
+
+```bash
+./scripts/native-up.sh       # infra + UI (sem backend container)
+./scripts/openwebui-up.sh    # mesmo que native-up
+./scripts/media-up.sh        # rebuild + infra completa
+./scripts/dev-down.sh        # para containers
+```
+
+> Migrations com backend no host: rode `npx prisma migrate deploy` em `backend/`.  
+> Com backend no Docker: `./scripts/db-migrate.sh`
 
 ### 4. Ollama no host
 
@@ -551,12 +615,13 @@ Configuração: `OPENWEBUI_LOGICAL_MODELS` e `OPENWEBUI_API_KEY_PROJECT_MAP` no 
 ## Scripts úteis
 
 ```bash
-./scripts/dev-up.sh          # backend + postgres + redis
-./scripts/openwebui-up.sh    # + Open WebUI
-./scripts/media-up.sh        # + media-worker (WITH_OPENWEBUI=1 para ambos)
+./scripts/native-up.sh       # postgres + redis + open-webui + media-worker + worker-all
+./scripts/openwebui-up.sh    # alias do native-up
+./scripts/media-up.sh        # rebuild + stack completa (sem backend)
+./scripts/dev-up.sh          # legado — preferir native-up
 ./scripts/dev-down.sh        # para containers
-./scripts/db-migrate.sh      # migrations Prisma
-./scripts/seed.sh            # usuário e projeto padrão
+./scripts/db-migrate.sh      # migrations (backend no Docker)
+./scripts/seed.sh            # usuário e projeto padrão (backend no Docker)
 ```
 
 ---
@@ -619,22 +684,24 @@ Lista completa em `.env.example`.
 
 ## Perfis Docker
 
-A stack base (`backend`, `postgres`, `redis`) sobe sem profiles.
+A stack base sobe **postgres**, **redis**, **open-webui**, **media-worker** e **worker-all** (projeto Docker: `my_llm`). Backend no Docker é opcional (`--profile docker-backend`).
 
 ```bash
-docker compose --profile openwebui --profile workers --profile media up -d   # setup completo
-docker compose --profile workers up -d                                         # só workers
-docker compose --profile workers-split up -d                                 # workers separados por tipo
-docker compose --profile qdrant up -d                                        # vetores alternativos
+docker compose up -d   # setup completo (sem backend container)
+docker compose --profile workers-split up -d   # workers separados por tipo
+docker compose --profile qdrant up -d          # vetores alternativos
+docker compose --profile docker-backend up -d backend   # backend no Docker
 ```
 
 | Profile | Serviço |
 |---------|---------|
-| `openwebui` | Open WebUI |
-| `workers` | worker-all (todas as filas NestJS) |
+| *(padrão)* | postgres, redis, open-webui, media-worker, worker-all |
+| `docker-backend` | Backend NestJS no Docker (opcional) |
 | `workers-split` | worker-orchestrator, indexing, embeddings, memory |
-| `media` | media-worker (Python) |
 | `qdrant` | Qdrant |
+
+> **Backend no Windows:** `./scripts/native-up.sh` + `backend/.env.example.windows-native`.  
+> Open WebUI → `http://host.docker.internal:3001/v1`. Backend usa `localhost:5432`, `localhost:6379`, `APP_ROLE=api`.
 
 ---
 
@@ -669,7 +736,7 @@ O projeto aplica otimizações locais por padrão:
 | Backend com erros TS (`recentMemoryItem` etc.) | `docker compose exec backend npx prisma generate && docker compose restart backend` |
 | `adm-zip` não encontrado | `docker compose exec backend npm install` |
 | Migration pendente | `./scripts/db-migrate.sh` |
-| Media-worker unhealthy | `docker compose --profile media up -d --build media-worker` |
+| Media-worker unhealthy | `docker compose up -d --build media-worker` |
 | LLM unavailable no health | Inicie Ollama no host: `ollama serve` |
 
 ---

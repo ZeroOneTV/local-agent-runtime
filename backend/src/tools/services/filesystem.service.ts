@@ -1,162 +1,93 @@
 import { Injectable } from '@nestjs/common';
-import * as fs from 'fs/promises';
-import * as path from 'path';
-import { PathGuardService } from '../path-guard.service';
+import { LocalFilesystemAccessService } from '../../local-filesystem/local-filesystem-access.service';
+import { FilesystemOperationContext } from '../../local-filesystem/local-filesystem.types';
 import { StructuredToolResult } from '../tools.types';
-import { SecurityConfigService } from '../../security/security.config';
+
+type FsCtx = Partial<FilesystemOperationContext> & { projectRoot?: string };
 
 @Injectable()
 export class FileSystemService {
-  constructor(
-    private readonly pathGuard: PathGuardService,
-    private readonly securityConfig: SecurityConfigService,
-  ) {}
+  constructor(private readonly localFs: LocalFilesystemAccessService) {}
 
-  async readFile(
-    rootPath: string,
-    filePath: string,
-  ): Promise<StructuredToolResult> {
-    if (this.pathGuard.isPathEscapeAttempt(filePath)) {
-      return this.error('PATH_FORBIDDEN', 'Caminho não permitido');
-    }
-
-    const safePath = this.pathGuard.resolveSafePath(rootPath, filePath);
-    if (!safePath) return this.error('PATH_FORBIDDEN', 'Caminho fora do root_path');
-
-    try {
-      const content = await fs.readFile(safePath, 'utf-8');
-      const stats = await fs.stat(safePath);
-      return {
-        success: true,
-        data: { path: filePath, content },
-        metadata: { bytes: stats.size },
-      };
-    } catch {
-      return this.error('FILE_NOT_FOUND', 'Arquivo não encontrado');
-    }
-  }
-
-  async listDirectory(
-    rootPath: string,
-    dirPath: string,
-  ): Promise<StructuredToolResult> {
-    const safePath = this.pathGuard.resolveSafePath(rootPath, dirPath || '.');
-    if (!safePath) return this.error('PATH_FORBIDDEN', 'Caminho fora do root_path');
-
-    try {
-      const entries = await fs.readdir(safePath, { withFileTypes: true });
-      const listing = entries.map((e) => ({
-        name: e.name,
-        type: e.isDirectory() ? 'directory' : 'file',
-      }));
-      return { success: true, data: { path: dirPath || '.', entries: listing } };
-    } catch {
-      return this.error('DIR_NOT_FOUND', 'Diretório não encontrado');
-    }
-  }
-
-  async searchFiles(
-    rootPath: string,
-    query: string,
-    searchPath = '.',
-  ): Promise<StructuredToolResult> {
-    const safePath = this.pathGuard.resolveSafePath(rootPath, searchPath);
-    if (!safePath) return this.error('PATH_FORBIDDEN', 'Caminho fora do root_path');
-
-    const results: string[] = [];
-    const maxFiles = this.securityConfig.maxFilesPerSearch;
-    const maxDepth = this.securityConfig.maxDirectoryDepth;
-    await this.searchInDir(safePath, rootPath, query, results, 0, maxDepth, maxFiles);
+  private ctx(rootPath: string, extra?: FsCtx): FilesystemOperationContext {
     return {
-      success: true,
-      data: { query, matches: results },
-      metadata: { count: results.length },
+      projectRoot: rootPath,
+      projectId: extra?.projectId,
+      conversationId: extra?.conversationId,
+      approved: extra?.approved ?? false,
     };
   }
 
-  async writeFile(
+  readFile(
     rootPath: string,
     filePath: string,
-    content: string,
+    extra?: FsCtx,
   ): Promise<StructuredToolResult> {
-    const safePath = this.pathGuard.resolveSafePath(rootPath, filePath);
-    if (!safePath) return this.error('PATH_FORBIDDEN', 'Caminho fora do root_path');
-
-    try {
-      await fs.mkdir(path.dirname(safePath), { recursive: true });
-      await fs.writeFile(safePath, content, 'utf-8');
-      return {
-        success: true,
-        data: { path: filePath, written: true },
-        metadata: { bytes: Buffer.byteLength(content, 'utf-8') },
-      };
-    } catch (e) {
-      return this.error('WRITE_FAILED', `Erro ao escrever: ${e}`);
-    }
+    return this.localFs.readFile(rootPath, filePath, this.ctx(rootPath, extra));
   }
 
-  async applyPatch(
+  listDirectory(
     rootPath: string,
-    filePath: string,
-    content: string,
+    dirPath: string,
+    extra?: FsCtx,
   ): Promise<StructuredToolResult> {
-    return this.writeFile(rootPath, filePath, content);
+    return this.localFs.listDirectory(
+      rootPath,
+      dirPath || '.',
+      this.ctx(rootPath, extra),
+    );
   }
 
-  async deleteFile(
-    rootPath: string,
-    filePath: string,
-  ): Promise<StructuredToolResult> {
-    const safePath = this.pathGuard.resolveSafePath(rootPath, filePath);
-    if (!safePath) return this.error('PATH_FORBIDDEN', 'Caminho fora do root_path');
-
-    try {
-      await fs.unlink(safePath);
-      return { success: true, data: { path: filePath, deleted: true } };
-    } catch {
-      return this.error('DELETE_FAILED', 'Arquivo não encontrado ou não pode ser removido');
-    }
-  }
-
-  private async searchInDir(
-    dir: string,
+  searchFiles(
     rootPath: string,
     query: string,
-    results: string[],
-    depth: number,
-    maxDepth: number,
-    maxFiles: number,
-  ): Promise<void> {
-    if (results.length >= maxFiles || depth > maxDepth) return;
-
-    const entries = await fs.readdir(dir, { withFileTypes: true });
-    for (const entry of entries) {
-      if (results.length >= maxFiles) break;
-      const fullPath = path.join(dir, entry.name);
-      if (entry.isDirectory()) {
-        await this.searchInDir(
-          fullPath,
-          rootPath,
-          query,
-          results,
-          depth + 1,
-          maxDepth,
-          maxFiles,
-        );
-      } else {
-        try {
-          const content = await fs.readFile(fullPath, 'utf-8');
-          if (content.toLowerCase().includes(query.toLowerCase())) {
-            results.push(path.relative(rootPath, fullPath));
-          }
-        } catch {
-          // skip binary
-        }
-      }
-    }
+    searchPath = '.',
+    extra?: FsCtx,
+  ): Promise<StructuredToolResult> {
+    return this.localFs.searchFiles(
+      rootPath,
+      query,
+      searchPath,
+      this.ctx(rootPath, extra),
+    );
   }
 
-  private error(code: string, message: string): StructuredToolResult {
-    return { success: false, error: { code, message } };
+  writeFile(
+    rootPath: string,
+    filePath: string,
+    content: string,
+    extra?: FsCtx,
+  ): Promise<StructuredToolResult> {
+    return this.localFs.writeFile(
+      rootPath,
+      filePath,
+      content,
+      this.ctx(rootPath, extra),
+    );
+  }
+
+  applyPatch(
+    rootPath: string,
+    filePath: string,
+    content: string,
+    extra?: FsCtx,
+  ): Promise<StructuredToolResult> {
+    return this.writeFile(rootPath, filePath, content, extra);
+  }
+
+  deleteFile(
+    rootPath: string,
+    filePath: string,
+    extra?: FsCtx,
+  ): Promise<StructuredToolResult> {
+    return this.localFs.deleteFile(rootPath, filePath, this.ctx(rootPath, extra));
+  }
+
+  stat(
+    rootPath: string,
+    filePath: string,
+    extra?: FsCtx,
+  ): Promise<StructuredToolResult> {
+    return this.localFs.stat(rootPath, filePath, this.ctx(rootPath, extra));
   }
 }

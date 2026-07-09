@@ -42,8 +42,26 @@ model Project {
   archiveItems         ArchiveItem[]
   memoryAccessLogs     MemoryAccessLog[]
   memoryPortabilityRecords MemoryPortabilityRecord[]
+  filesystemPermissions ProjectFilesystemPermission[]
 
   @@map("projects")
+}
+
+model ProjectFilesystemPermission {
+  id              String   @id @default(uuid()) @db.Uuid
+  projectId       String   @map("project_id") @db.Uuid
+  mode            String
+  hostPrefix      String   @map("host_prefix")
+  containerPrefix String?  @map("container_prefix")
+  accessLevel     String   @map("access_level")
+  isActive        Boolean  @default(true) @map("is_active")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+  @@map("project_filesystem_permissions")
 }
 
 model Conversation {
