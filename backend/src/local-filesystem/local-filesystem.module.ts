@@ -10,6 +10,7 @@ import { DockerMountedFilesystemProvider } from './providers/docker-mounted-file
 import { HostAgentFilesystemProvider } from './providers/host-agent-filesystem.provider';
 import { LocalFilesystemController } from './local-filesystem.controller';
 import { LocalFilesystemPermissionsService } from './local-filesystem-permissions.service';
+import { HostFilesystemDiscoveryService } from './host-filesystem-discovery.service';
 
 @Module({
   controllers: [LocalFilesystemController],
@@ -24,7 +25,13 @@ import { LocalFilesystemPermissionsService } from './local-filesystem-permission
     HostAgentFilesystemProvider,
     LocalFilesystemAccessService,
     LocalFilesystemPermissionsService,
+    HostFilesystemDiscoveryService,
   ],
-  exports: [LocalFilesystemAccessService, LocalFilesystemConfigService],
+  exports: [
+    LocalFilesystemAccessService,
+    LocalFilesystemConfigService,
+    HostFilesystemDiscoveryService,
+    PathResolverService,
+  ],
 })
 export class LocalFilesystemModule {}

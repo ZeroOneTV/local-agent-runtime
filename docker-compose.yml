@@ -160,6 +160,26 @@ services:
     profiles:
       - qdrant
 
+  # Meta-buscador self-hosted para a tool web_search (opt-in).
+  # Suba com: docker compose --profile searxng up -d
+  # Depois: WEB_SEARCH_ENABLED=true, WEB_SEARCH_PROVIDER=searxng,
+  #         WEB_SEARCH_SEARXNG_URL=http://searxng:8080 (ou http://localhost:8888 fora do compose).
+  # IMPORTANTE: habilite o formato JSON em search.formats no settings.yml do SearXNG.
+  searxng:
+    image: searxng/searxng:latest
+    container_name: local-ai-searxng
+    restart: unless-stopped
+    ports:
+      - "8888:8080"
+    environment:
+      - SEARXNG_BASE_URL=http://localhost:8888/
+    volumes:
+      - searxng_data:/etc/searxng
+    networks:
+      - local-ai-network
+    profiles:
+      - searxng
+
   open-webui:
     image: ghcr.io/open-webui/open-webui:main
     container_name: local-ai-open-webui
@@ -236,6 +256,7 @@ volumes:
   postgres_data:
   redis_data:
   qdrant_data:
+  searxng_data:
   open_webui_data:
 
 networks:

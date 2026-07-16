@@ -132,6 +132,29 @@ export class LocalFilesystemAccessService {
     });
   }
 
+  async sizeSummary(
+    projectRoot: string,
+    dirPath: string,
+    options: {
+      includeFiles?: boolean;
+      includeDirectories?: boolean;
+      recursive?: boolean;
+      maxDepth?: number;
+      maxEntries?: number;
+    },
+    ctx: FilesystemOperationContext,
+  ): Promise<StructuredToolResult> {
+    return this.execute('size_summary', dirPath || '.', projectRoot, ctx, async (resolved) => {
+      const provider = this.getProvider(resolved.mode);
+      const data = await provider.sizeSummary(
+        resolved.resolvedPath,
+        resolved.originalPath || dirPath || '.',
+        options,
+      );
+      return { success: true, data, metadata: { recursive: !!options.recursive } };
+    });
+  }
+
   private async execute(
     operation: FilesystemOperation,
     inputPath: string,

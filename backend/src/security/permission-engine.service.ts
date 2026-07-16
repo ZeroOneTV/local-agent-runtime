@@ -15,6 +15,14 @@ export class PermissionEngineService {
     private readonly config: ConfigService,
   ) {}
 
+  /**
+   * Access/safety gate for a tool call. Decisions about *execution mode* and
+   * *human approval* now live entirely in AgenticToolPolicyService (the native
+   * tool-calling policy). This engine keeps only what that policy does NOT
+   * cover: disabled tools, project ownership/access, and rate limiting.
+   * It never asks for approval on its own (`requiresApproval` is always false)
+   * so the two engines can't disagree about "modes".
+   */
   async evaluate(
     ctx: PermissionContext,
     definition: ToolDefinition,
@@ -24,14 +32,6 @@ export class PermissionEngineService {
         allowed: false,
         code: 'TOOL_DISABLED',
         reason: `Tool desabilitada: ${ctx.toolName}`,
-      };
-    }
-
-    if (ctx.executionMode === 'safe' && definition.kind !== 'readonly') {
-      return {
-        allowed: false,
-        code: 'SAFE_MODE_READONLY',
-        reason: 'Modo safe permite apenas tools de leitura',
       };
     }
 
@@ -56,32 +56,12 @@ export class PermissionEngineService {
       };
     }
 
-    const requiresApproval = this.requiresApproval(ctx, definition);
-
     const auditLevel =
       definition.riskLevel === 'critical' || definition.riskLevel === 'high'
         ? 'full'
         : 'basic';
 
-    return { allowed: true, requiresApproval, auditLevel };
-  }
-
-  private requiresApproval(
-    ctx: PermissionContext,
-    definition: ToolDefinition,
-  ): boolean {
-    if (ctx.approved) return false;
-
-    if (ctx.executionMode === 'autonomous') {
-      if (this.securityConfig.autonomousTools.includes(ctx.toolName)) {
-        return false;
-      }
-    }
-
-    const { riskLevel } = definition;
-    if (riskLevel === 'low') return false;
-    if (riskLevel === 'critical') return true;
-    return true;
+    return { allowed: true, requiresApproval: false, auditLevel };
   }
 
   private checkRateLimit(conversationId: string): boolean {

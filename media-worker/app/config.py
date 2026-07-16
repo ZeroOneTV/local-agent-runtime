@@ -11,6 +11,8 @@ MAX_HEIGHT = int(os.getenv('MEDIA_MAX_IMAGE_HEIGHT', '8000'))
 MAX_BYTES = int(os.getenv('MEDIA_MAX_IMAGE_SIZE_MB', '25')) * 1024 * 1024
 GENERATE_THUMBNAILS = os.getenv('MEDIA_GENERATE_THUMBNAILS', 'true').lower() != 'false'
 THUMBNAIL_FORMAT = os.getenv('MEDIA_THUMBNAIL_FORMAT', 'webp')
+THUMBNAIL_MAX_SIZE = int(os.getenv('MEDIA_THUMBNAIL_MAX_SIZE', '320'))
+THUMBNAIL_QUALITY = int(os.getenv('MEDIA_THUMBNAIL_QUALITY', '85'))
 
 # OCR
 OCR_PRIMARY = os.getenv('MEDIA_OCR_PRIMARY', 'paddleocr')
@@ -31,5 +33,19 @@ VLM_PROVIDER = os.getenv('MEDIA_VLM_PROVIDER', 'ollama')
 VLM_MODEL = os.getenv('MEDIA_VLM_MODEL', 'qwen2.5vl:7b')
 VLM_BASE_URL = os.getenv('MEDIA_VLM_BASE_URL', 'http://host.docker.internal:11434')
 VLM_MAX_IMAGE_SIZE = int(os.getenv('MEDIA_VLM_MAX_IMAGE_SIZE', '1280'))
+VLM_AVAILABILITY_TIMEOUT_S = int(os.getenv('MEDIA_VLM_AVAILABILITY_TIMEOUT_S', '3'))
+VLM_REQUEST_TIMEOUT_S = int(os.getenv('MEDIA_VLM_REQUEST_TIMEOUT_S', '120'))
+VLM_PROMPT_LANGUAGE = os.getenv('MEDIA_VLM_PROMPT_LANGUAGE', 'pt')
+
+# Retry (transient failures only — e.g. VLM network timeout)
+VLM_MAX_RETRIES = int(os.getenv('MEDIA_VLM_MAX_RETRIES', '3'))
+VLM_RETRY_BACKOFF_MS = int(os.getenv('MEDIA_VLM_RETRY_BACKOFF_MS', '400'))
+
+# Semantic tag extraction
+MAX_TAG_SOURCE_WORDS = int(os.getenv('MEDIA_MAX_TAG_SOURCE_WORDS', '30'))
+MAX_TAGS = int(os.getenv('MEDIA_MAX_TAGS', '15'))
+
+# Image-type detection keywords (externalized, parametrizável por idioma)
+IMAGE_TYPE_KEYWORDS_PATH = os.getenv('MEDIA_IMAGE_TYPE_KEYWORDS_PATH', '')
 
 ProcessingMode = Literal['fast', 'balanced', 'full']

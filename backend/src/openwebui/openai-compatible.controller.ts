@@ -90,12 +90,12 @@ export class OpenAiCompatibleController {
         userId: body.user,
       });
 
-      if (result.plan) {
+      if (result.jobId) {
         this.stream.writeStatus(
           res,
           completionId,
           modelName,
-          `Plano: ${result.plan.objective}`,
+          `Job em background criado: ${result.jobId}`,
         );
       }
 
@@ -148,7 +148,6 @@ export class OpenAiCompatibleController {
       orchestrator: {
         intent: result.intent.intent,
         flow: result.intent.flow,
-        plan: result.plan?.objective,
         jobId: result.jobId,
         pendingApprovals: result.pendingApprovals,
         memorySuggestions: result.memorySuggestions,

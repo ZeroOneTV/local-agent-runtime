@@ -279,7 +279,8 @@ MEDIA_VLM_BASE_URL=http://host.docker.internal:11434
 
 ```bash
 curl http://localhost:5000/health
-# → status de cada provider (paddleocr, docling, vlm)
+# → status de cada provider (paddleocr, tesseract, ppStructure, docling, vlm),
+#    todos reportando enabled + available
 ```
 
 ---
@@ -375,7 +376,7 @@ Tarefas CPU-intensivas **não rodam no processo da API**. O backend enfileira e 
 | memory | `memory-jobs` | `JOBS_MEMORY_CONCURRENCY` |
 | media (Python) | HTTP :5000 | container `media-worker` |
 
-### Perfis de hardware
+### Perfis de hardware (RAM do sistema)
 
 | Perfil | RAM | Arquivo |
 |--------|-----|---------|
@@ -383,6 +384,47 @@ Tarefas CPU-intensivas **não rodam no processo da API**. O backend enfileira e 
 | `balanced-low` | 16 GB | `.env.example.balanced-low` |
 | `balanced` | 32 GB+ | `.env.example.balanced` |
 | `performance` | 64 GB+ | `.env.example.performance` |
+
+> Esses perfis ajustam concorrência de workers, memória do Postgres/Redis e limites de contexto (`MAX_CONTEXT_TOKENS`, `RAG_TOP_K`, etc.) — é o consumo da stack (backend + Postgres + Redis + workers), **não** inclui a VRAM/memória usada pelo próprio LLM, que roda fora do Docker via Ollama nativo no host.
+
+### GPU e escolha de modelo
+
+O Ollama roda nativo no host (não em container) justamente para acessar a GPU diretamente. A tabela abaixo é uma recomendação geral por VRAM disponível (quantização `Q4_K_M`, o padrão do `ollama pull`) — não é um número medido neste projeto, é o ponto de partida razoável para cada faixa:
+
+| VRAM da GPU | Modelo sugerido | Observação |
+|---|---|---|
+| 4–6 GB | `qwen2.5:3b` ou `llama3.2:3b` | Tool-calling funcional; modelo pequeno, respostas mais simples |
+| 8 GB | `qwen2.5:7b` | Bom equilíbrio custo/qualidade para o loop de tools |
+| 10–12 GB | `qwen2.5:14b` ou `qwen3:14b` (default do `.env.example`) | Melhor raciocínio para código/análise de projeto |
+| 16 GB | `qwen3:14b` com mais contexto (`MAX_CONTEXT_TOKENS` maior) | Mesmo modelo do tier anterior, com folga |
+| 24 GB | `qwen2.5:32b` ou `qwen3:32b` | Só compensa se a placa tiver ~24 GB livres só para o Ollama |
+| 48 GB+ (ex. profissional, ou 2 GPUs) | `qwen2.5:72b` ou `llama3.3:70b` | Fora do alcance da maioria dos setups domésticos |
+
+GPUs AMD (ROCm) seguem a mesma lógica de VRAM da tabela acima — o Ollama suporta ROCm, mas é menos maduro que CUDA (mais chance de precisar ajustar `HSA_OVERRIDE_GFX_VERSION` dependendo do modelo da placa).
+
+### Apple Silicon (MacBooks M1/M2/M3/M4)
+
+Macs com chip Apple não têm VRAM separada — usam **memória unificada**, compartilhada entre CPU e GPU, e o Ollama já acelera via Metal automaticamente (não é um cenário CPU-only, mesmo sem GPU dedicada). Regra prática: reserve uns 6–8 GB para o macOS e os demais apps, e trate o restante como "VRAM disponível" na tabela anterior:
+
+| Memória unificada | Modelo sugerido |
+|---|---|
+| 8 GB | `qwen2.5:3b` — no limite; espere lentidão rodando o resto da stack junto |
+| 16 GB | `qwen2.5:7b` |
+| 24 GB | `qwen2.5:14b` ou `qwen3:14b` |
+| 32 GB+ | `qwen3:14b` com folga, ou `qwen2.5:32b` com paciência |
+| 64 GB+ (M-Max/M-Ultra) | `qwen2.5:32b` ou `llama3.3:70b` |
+
+### Sem GPU dedicada (CPU-only)
+
+Sem GPU (Mac Intel antigo, notebook sem placa dedicada, VM sem passthrough), o Ollama roda inteiramente na CPU — funciona, mas fica bem mais lento, e isso pesa mais neste projeto porque o orquestrador faz **múltiplas chamadas de tool por turno** (cada uma é uma nova inferência). Priorize um modelo pequeno e rápido em vez de um modelo "melhor" e lento:
+
+- **Recomendado:** `qwen2.5:3b-instruct` ou `llama3.2:3b` — suporte a tool-calling razoável no Ollama e velocidade tolerável em CPU moderna (com AVX2).
+- **Evite** `qwen3:14b`/`qwen2.5:7b`+ em CPU-only: tecnicamente roda, mas cada ciclo do loop de tools (até `COGNITIVE_MAX_CYCLES` vezes por turno) pode levar minutos, o que inviabiliza o fluxo "tenta antes de perguntar" na prática.
+- Se mesmo um modelo de 3B estiver lento demais, `qwen2.5:1.5b` é a opção mais leve disponível — mas espere mais falhas de tool-calling, já que modelos muito pequenos seguem pior o schema de function-calling.
+
+### Custo extra do media-worker
+
+Os números acima cobrem só o LLM de chat. Habilitar processamento de imagem mais pesado no build do `media-worker` (`INSTALL_OCR=true` para PaddleOCR, `INSTALL_DOCLING=true`, `INSTALL_VISION=true`) adiciona RAM ao container `media-worker` (PaddleOCR/PaddlePaddle, Docling, torch/transformers), independente do perfil de hardware escolhido acima — o build mínimo (só Tesseract) é bem mais leve e é o padrão do `docker-compose.yml`. Em hardware já no limite do perfil `lite`/`balanced-low`, prefira manter o build mínimo e `MEDIA_ENABLE_VLM=false`/`MEDIA_ENABLE_DOCLING=false`.
 
 ### Resource Guard
 
@@ -604,11 +646,32 @@ Configuração: `OPENWEBUI_LOGICAL_MODELS` e `OPENWEBUI_API_KEY_PROJECT_MAP` no 
 | Controle | Descrição |
 |----------|-----------|
 | `execution_mode` | `safe` / `developer` / `autonomous` por projeto |
-| `root_path` | Tools só acessam arquivos dentro do diretório do projeto |
-| Aprovação | Tools de escrita/execução ficam `pending` |
+| Filesystem | PathGuard + modos native/docker-mounted/disabled |
+| Aprovação | Escrita/shell/delete ficam `pending` em `/approvals` |
+| Grants | Permitir uma vez / conversa / path (com TTL) |
 | Shell | Desabilitado por padrão (`ALLOW_SHELL_COMMANDS=false`) |
 | Imagens | Limites de tamanho; RAG exige confirmação |
 | Auditoria | Toda tool gera log em `tool_audit_logs` |
+
+### Agentic tool use and approvals
+
+O backend controla toda execução de tools.
+
+- **Read-only** (list, read, search, git status, RAG…) pode auto-executar quando a Permission Engine permitir.
+- **Escrita, delete, shell, patch, restore** exigem aprovação explícita.
+- O Open WebUI só exibe a conversa; a lógica de permissão fica no backend.
+
+Quando o assistente precisa de permissão, responde com um card markdown e link:
+
+```text
+http://localhost:3001/approvals
+```
+
+Opções: permitir uma vez · sempre nesta conversa · sempre neste caminho · negar.
+
+### Why not use Open WebUI tools directly?
+
+O Open WebUI é só a interface. O backend é a fonte de verdade para memória, RAG, filesystem, tools, approvals e audit logs — evitando duplicar segurança no frontend.
 
 ---
 

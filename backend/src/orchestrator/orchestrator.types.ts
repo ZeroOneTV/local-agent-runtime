@@ -56,7 +56,6 @@ export interface OrchestratorResult {
   content: string;
   model: string;
   intent: IntentAnalysis;
-  plan?: OrchestratorPlan;
   cycles: ExecutionCycleResult[];
   events: string[];
   memorySuggestions: MemorySuggestion[];
@@ -69,6 +68,7 @@ export interface OrchestratorResult {
 export const READONLY_AUTO_TOOLS = [
   'read_file',
   'list_directory',
+  'size_summary',
   'search_files',
   'git_status',
   'git_diff',

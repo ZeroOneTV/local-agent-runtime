@@ -1,9 +1,6 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { CognitiveOrchestratorService } from './cognitive-orchestrator.service';
 import { IntentAnalyzerService } from './intent-analyzer.service';
-import { PlannerService } from './planner.service';
-import { ExecutionLoopService } from './execution-loop.service';
-import { ReflectionService } from './reflection.service';
 import { MemoryDecisionService } from './memory-decision.service';
 import { EventService } from './event.service';
 import { OrchestratorConfigService } from './orchestrator.config';
@@ -18,6 +15,8 @@ import { ConversationsModule } from '../conversations/conversations.module';
 import { ToolsModule } from '../tools/tools.module';
 import { JobsModule } from '../jobs/jobs.module';
 import { MemoryStratificationModule } from '../memory-stratification/memory-stratification.module';
+import { AgenticToolsModule } from '../agentic-tools/agentic-tools.module';
+import { LocalFilesystemModule } from '../local-filesystem/local-filesystem.module';
 
 @Module({
   imports: [
@@ -27,6 +26,8 @@ import { MemoryStratificationModule } from '../memory-stratification/memory-stra
     ToolsModule,
     forwardRef(() => JobsModule),
     MemoryStratificationModule,
+    AgenticToolsModule,
+    LocalFilesystemModule,
   ],
   controllers: [OrchestratorController, WebhookController],
   providers: [
@@ -34,9 +35,6 @@ import { MemoryStratificationModule } from '../memory-stratification/memory-stra
     WebhookDispatcherService,
     CognitiveOrchestratorService,
     IntentAnalyzerService,
-    PlannerService,
-    ExecutionLoopService,
-    ReflectionService,
     MemoryDecisionService,
     EventService,
   ],

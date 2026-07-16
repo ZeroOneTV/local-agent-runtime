@@ -72,10 +72,16 @@ export class FilesystemPermissionService {
     }
 
     if (resolved.accessLevel === 'blocked') {
+      const isKnownLabel =
+        /^(documentos?|documents?|desktop|downloads?|baixados?|pictures?|imagens?|music|m[uú]sicas?|videos?|v[ií]deos?|home|onedrive)$/i.test(
+          resolved.originalPath.trim(),
+        );
       return {
         ...base,
         allowed: false,
-        reason: 'Path fora dos mounts permitidos',
+        reason: isKnownLabel
+          ? 'Label de pasta pessoal não pode ser resolvido via project.rootPath — use HostFilesystemDiscovery / caminho absoluto'
+          : 'Path fora dos mounts permitidos',
         risk: 'medium',
       };
     }
@@ -106,10 +112,15 @@ export class FilesystemPermissionService {
     switch (operation) {
       case 'list':
       case 'stat':
+      case 'size_summary':
         if (!this.fsConfig.allowBrowse) {
           return { ...base, allowed: false, reason: 'Browse desabilitado', risk: 'low' };
         }
-        return { ...base, allowed: true, risk: 'low' };
+        return {
+          ...base,
+          allowed: true,
+          risk: operation === 'size_summary' ? 'medium' : 'low',
+        };
 
       case 'read':
       case 'search':

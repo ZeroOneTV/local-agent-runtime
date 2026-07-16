@@ -1,4 +1,3 @@
-import re
 import time
 from typing import TYPE_CHECKING
 
@@ -11,6 +10,33 @@ try:
     import pytesseract
 except ImportError:
     pytesseract = None
+
+# Mapeia código curto (ISO 639-1) → pacote de idioma do Tesseract (ISO 639-2/T).
+# Fallback: usa o próprio código se não houver mapeamento especial.
+_TESSERACT_LANG_MAP = {
+    'pt': 'por',
+    'en': 'eng',
+    'es': 'spa',
+    'fr': 'fra',
+    'de': 'deu',
+    'it': 'ita',
+    'nl': 'nld',
+    'ru': 'rus',
+    'ja': 'jpn',
+    'ko': 'kor',
+    'zh': 'chi_sim',
+    'ar': 'ara',
+}
+
+
+def _resolve_tesseract_langs(languages: list[str]) -> str:
+    """Converte a lista de OCR_LANGUAGES em string 'por+eng' para o Tesseract."""
+    resolved: list[str] = []
+    for code in languages:
+        mapped = _TESSERACT_LANG_MAP.get(code.lower(), code.lower())
+        if mapped not in resolved:
+            resolved.append(mapped)
+    return '+'.join(resolved) if resolved else 'eng'
 
 
 class TesseractProvider(BaseProvider):
@@ -35,9 +61,11 @@ class TesseractProvider(BaseProvider):
                 data={'fullText': '', 'blocks': [], 'language': languages},
             )
 
-        lang = '+'.join(['por', 'eng'] if 'pt' in languages else ['eng'])
+        lang = _resolve_tesseract_langs(languages)
         if mode == 'fast':
-            lang = 'eng'
+            # Modo rápido: só o primeiro idioma configurado (default pt→por)
+            primary = languages[0] if languages else 'pt'
+            lang = _TESSERACT_LANG_MAP.get(primary.lower(), primary.lower())
 
         blocks: list[dict] = []
         full_text = ''

@@ -53,7 +53,6 @@ export class OrchestratorController {
       model: result.model,
       orchestrator: {
         intent: result.intent,
-        plan: result.plan,
         cycles: result.cycles,
         pendingApprovals: result.pendingApprovals,
         memorySuggestions: result.memorySuggestions,

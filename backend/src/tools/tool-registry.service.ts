@@ -1,9 +1,11 @@
-import { Injectable, OnModuleInit } from '@nestjs/common';
+import { Injectable, OnModuleInit, Inject, forwardRef } from '@nestjs/common';
 import {
   ToolDefinition,
   ToolHandler,
   ToolExecutionContext,
   JsonSchemaProperty,
+  JsonSchemaObject,
+  OllamaToolSpec,
 } from './tools.types';
 import { FileSystemService } from './services/filesystem.service';
 import { GitService } from './services/git.service';
@@ -16,6 +18,8 @@ import { RetrievalService } from '../rag/retrieval.service';
 import { QueueService } from '../queue/queue.service';
 import { MemoryOrigin } from '../memory/memory.types';
 import { MediaService } from '../media/media.service';
+import { JobsService } from '../jobs/jobs.service';
+import { WebSearchService } from './services/web-search/web-search.service';
 
 function schema(props: Record<string, JsonSchemaProperty>): Record<string, JsonSchemaProperty> {
   return props;
@@ -45,6 +49,9 @@ export class ToolRegistryService implements OnModuleInit {
     private readonly retrieval: RetrievalService,
     private readonly queue: QueueService,
     private readonly media: MediaService,
+    @Inject(forwardRef(() => JobsService))
+    private readonly jobs: JobsService,
+    private readonly webSearch: WebSearchService,
   ) {}
 
   onModuleInit() {
@@ -55,12 +62,58 @@ export class ToolRegistryService implements OnModuleInit {
     return Array.from(this.definitions.values());
   }
 
+  /** Definitions currently usable (respecting each tool's isAvailable check). */
+  availableDefinitions(): ToolDefinition[] {
+    return this.listDefinitions().filter(
+      (d) => !d.isAvailable || d.isAvailable(),
+    );
+  }
+
   getDefinition(name: string): ToolDefinition | undefined {
     return this.definitions.get(name);
   }
 
   getHandler(name: string): ToolHandler | undefined {
     return this.handlers.get(name);
+  }
+
+  /** Whether a persistent "always allow" grant is permitted for a tool. */
+  allowsPersistentGrant(name: string): boolean {
+    const def = this.definitions.get(name);
+    if (!def) return false;
+    return def.allowPersistentGrant !== false;
+  }
+
+  /** Convert the simplified inputSchema into standard JSON Schema. */
+  toJsonSchema(definition: ToolDefinition): JsonSchemaObject {
+    const properties: JsonSchemaObject['properties'] = {};
+    const required: string[] = [];
+    for (const [key, prop] of Object.entries(definition.inputSchema)) {
+      const { required: isRequired, ...rest } = prop;
+      properties[key] = rest;
+      if (isRequired) required.push(key);
+    }
+    return { type: 'object', properties, required };
+  }
+
+  /**
+   * Build the OpenAI/Ollama-compatible `tools` array for function-calling.
+   * When `names` is provided, only those tools are included (in that order).
+   */
+  toOllamaTools(names?: string[]): OllamaToolSpec[] {
+    const defs = names
+      ? names
+          .map((n) => this.definitions.get(n))
+          .filter((d): d is ToolDefinition => !!d)
+      : this.availableDefinitions();
+    return defs.map((def) => ({
+      type: 'function',
+      function: {
+        name: def.name,
+        description: def.description,
+        parameters: this.toJsonSchema(def),
+      },
+    }));
   }
 
   validateInput(
@@ -139,6 +192,43 @@ export class ToolRegistryService implements OnModuleInit {
         outputSchema: schema({ type: { type: 'string' }, size: { type: 'string' } }),
       },
       exec((a, c) => this.fs.stat(c.rootPath, a.path as string, fsCtx(c))),
+    );
+
+    this.register(
+      {
+        name: 'size_summary',
+        description:
+          'Resumo de pastas/arquivos: contagens, arquivo mais pesado e pasta mais pesada (superficial por padrão).',
+        category: 'filesystem',
+        kind: 'readonly',
+        riskLevel: 'low',
+        requiresApproval: false,
+        async: false,
+        inputSchema: schema({
+          path: { type: 'string', description: 'Diretório absoluto ou relativo' },
+          includeFiles: { type: 'boolean' },
+          includeDirectories: { type: 'boolean' },
+          recursive: { type: 'boolean', description: 'Cálculo profundo (mais lento)' },
+        }),
+        outputSchema: schema({
+          directoryCount: { type: 'string' },
+          fileCount: { type: 'string' },
+          heaviestFile: { type: 'string' },
+          heaviestDirectory: { type: 'string' },
+        }),
+      },
+      exec((a, c) =>
+        this.fs.sizeSummary(
+          c.rootPath,
+          (a.path as string) || '.',
+          {
+            includeFiles: a.includeFiles !== false,
+            includeDirectories: a.includeDirectories !== false,
+            recursive: a.recursive === true,
+          },
+          fsCtx(c),
+        ),
+      ),
     );
 
     this.register(
@@ -224,6 +314,7 @@ export class ToolRegistryService implements OnModuleInit {
         kind: 'write',
         riskLevel: 'critical',
         requiresApproval: true,
+        allowPersistentGrant: false,
         async: false,
         inputSchema: schema({ path: { type: 'string', required: true } }),
         outputSchema: schema({ deleted: { type: 'string' } }),
@@ -322,6 +413,7 @@ export class ToolRegistryService implements OnModuleInit {
         kind: 'execution',
         riskLevel: 'critical',
         requiresApproval: true,
+        allowPersistentGrant: false,
         async: false,
         inputSchema: schema({ command: { type: 'string', required: true } }),
         outputSchema: schema({ output: { type: 'string' } }),
@@ -337,6 +429,7 @@ export class ToolRegistryService implements OnModuleInit {
         kind: 'execution',
         riskLevel: 'high',
         requiresApproval: true,
+        allowPersistentGrant: false,
         async: true,
         inputSchema: schema({}),
         outputSchema: schema({ output: { type: 'string' } }),
@@ -352,6 +445,7 @@ export class ToolRegistryService implements OnModuleInit {
         kind: 'execution',
         riskLevel: 'high',
         requiresApproval: true,
+        allowPersistentGrant: false,
         async: true,
         inputSchema: schema({}),
         outputSchema: schema({ output: { type: 'string' } }),
@@ -424,6 +518,55 @@ export class ToolRegistryService implements OnModuleInit {
       exec(async (_a, c) => {
         const result = await this.indexing.reindexProject(c.projectId);
         return { success: true, data: result, metadata: { async: true } };
+      }),
+    );
+
+    // Jobs (tarefas longas em background)
+    this.register(
+      {
+        name: 'enqueue_long_job',
+        description:
+          'Enfileira uma tarefa longa/pesada para rodar em background (fila BullMQ) e retorna imediatamente um jobId. ' +
+          'Use esta tool quando a tarefa for pesada demais para resolver no fluxo síncrono — ex.: reindexação completa do projeto, ' +
+          'análise/relatório de arquitetura do projeto inteiro, ou processamento de muitos arquivos. ' +
+          'NÃO use para pedidos rápidos (listar pasta, ler arquivo, responder pergunta). ' +
+          'Depois de chamar, informe ao usuário que o job foi criado e que ele será avisado quando concluir.',
+        category: 'jobs',
+        kind: 'write',
+        riskLevel: 'medium',
+        requiresApproval: false,
+        async: true,
+        inputSchema: schema({
+          task: {
+            type: 'string',
+            required: true,
+            description: 'Descrição da tarefa longa a executar em background.',
+          },
+          kind: {
+            type: 'string',
+            description:
+              'Tipo da tarefa: project_indexing | rag_reindex | project_analysis.',
+            enum: ['project_indexing', 'rag_reindex', 'project_analysis'],
+          },
+        }),
+        outputSchema: schema({
+          jobId: { type: 'string' },
+          status: { type: 'string' },
+          type: { type: 'string' },
+        }),
+      },
+      exec(async (a, c) => {
+        const job = await this.jobs.createAndEnqueue({
+          projectId: c.projectId,
+          conversationId: c.conversationId,
+          message: a.task as string,
+          intentType: (a.kind as string) || 'project_indexing',
+        });
+        return {
+          success: true,
+          data: { jobId: job.id, status: 'queued', type: job.type },
+          metadata: { async: true },
+        };
       }),
     );
 
@@ -649,16 +792,43 @@ export class ToolRegistryService implements OnModuleInit {
       }),
     );
 
-    // Browser
+    // Browser / internet
+    this.register(
+      {
+        name: 'web_search',
+        description:
+          'Busca na internet (motor de busca configurado pelo operador) por informações públicas. ' +
+          'Use para achar documentação, comparar informações ou pesquisar algo que você não sabe — ' +
+          'não para decisões que afetem arquivos do usuário. Retorna título, URL e trecho de cada resultado.',
+        category: 'browser',
+        kind: 'external',
+        riskLevel: 'medium',
+        requiresApproval: false,
+        async: false,
+        isAvailable: () => this.webSearch.isAvailable(),
+        inputSchema: schema({
+          query: { type: 'string', required: true, description: 'Termos da busca.' },
+          maxResults: { type: 'number', description: 'Máximo de resultados.' },
+        }),
+        outputSchema: schema({ results: { type: 'string' } }),
+      },
+      exec((a) =>
+        this.webSearch.search(a.query as string, a.maxResults as number | undefined),
+      ),
+    );
+
     this.register(
       {
         name: 'fetch_url',
-        description: 'Busca conteúdo de uma URL (whitelist de hosts).',
+        description:
+          'Lê o conteúdo de uma URL pública (HTTP/HTTPS). Use depois de web_search para abrir ' +
+          'um resultado específico. Bloqueia endereços internos/reservados por segurança.',
         category: 'browser',
         kind: 'external',
         riskLevel: 'high',
         requiresApproval: true,
         async: false,
+        isAvailable: () => this.browser.fetchEnabled,
         inputSchema: schema({ url: { type: 'string', required: true } }),
         outputSchema: schema({ content: { type: 'string' } }),
       },

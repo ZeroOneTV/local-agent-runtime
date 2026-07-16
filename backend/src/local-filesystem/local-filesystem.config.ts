@@ -20,6 +20,50 @@ export class LocalFilesystemConfigService {
     );
   }
 
+  get discoveryEnabled(): boolean {
+    return this.config.get<boolean>('hostFilesystem.discoveryEnabled') ?? true;
+  }
+
+  get allowDriveDiscovery(): boolean {
+    return (
+      this.config.get<boolean>('hostFilesystem.allowDriveDiscovery') ?? true
+    );
+  }
+
+  get allowHomeDiscovery(): boolean {
+    return (
+      this.config.get<boolean>('hostFilesystem.allowHomeDiscovery') ?? true
+    );
+  }
+
+  get userHome(): string {
+    return this.config.get<string>('hostFilesystem.userHome') || '';
+  }
+
+  get documentsPath(): string {
+    return this.config.get<string>('hostFilesystem.documentsPath') || '';
+  }
+
+  get desktopPath(): string {
+    return this.config.get<string>('hostFilesystem.desktopPath') || '';
+  }
+
+  get downloadsPath(): string {
+    return this.config.get<string>('hostFilesystem.downloadsPath') || '';
+  }
+
+  get picturesPath(): string {
+    return this.config.get<string>('hostFilesystem.picturesPath') || '';
+  }
+
+  get musicPath(): string {
+    return this.config.get<string>('hostFilesystem.musicPath') || '';
+  }
+
+  get videosPath(): string {
+    return this.config.get<string>('hostFilesystem.videosPath') || '';
+  }
+
   get allowBrowse(): boolean {
     return this.config.get<boolean>('hostFilesystem.allowBrowse') ?? true;
   }

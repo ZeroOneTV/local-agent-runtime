@@ -56,6 +56,38 @@ export interface WorkingMemoryState {
   temporaryFindings?: string[];
   lastError?: string | null;
   activeMediaIds?: string[];
+  /** Pasta/arquivo em foco para follow-ups ("nessa pasta", "downloads", etc.). */
+  activeTarget?: ActiveTarget | null;
+  /** Operação pendente aguardando o usuário informar a pasta. */
+  pendingFsIntent?: PendingFsIntent | null;
+  updatedAt: string;
+}
+
+export interface PendingFsIntent {
+  tool: string;
+  recursive?: boolean;
+  query?: string;
+  createdAt: string;
+}
+
+export type ActiveTargetType =
+  | 'filesystem_directory'
+  | 'filesystem_file'
+  | 'project_root';
+
+export type ActiveTargetSource =
+  | 'host_personal'
+  | 'project'
+  | 'absolute'
+  | 'follow_up';
+
+export interface ActiveTarget {
+  type: ActiveTargetType;
+  path: string;
+  label?: string;
+  source: ActiveTargetSource;
+  lastOperation?: string;
+  knownFolder?: string;
   updatedAt: string;
 }
 

@@ -42,7 +42,14 @@ export class IntentAnalyzerService {
     if (/arquitetura|estrutura|design|módulo|onde ficar/.test(lower))
       return 'architecture_discussion';
     if (/analis|revis|avali|verificar código|review/.test(lower)) return 'code_analysis';
-    if (/listar|ler arquivo|buscar arquivo|abrir pasta/.test(lower)) return 'file_operation';
+    // Filesystem follow-ups / personal folders / size questions
+    if (
+      /listar|ler arquivo|buscar arquivo|abrir pasta|pasta documentos|meus documentos|documentos do windows|desktop|downloads|baixados|área de trabalho|quantas?\s+pastas?|mais\s+pesad|nessa pasta|e na pasta|tamanho/.test(
+        lower,
+      )
+    ) {
+      return 'file_operation';
+    }
     if (/processar vídeo|processar pdf|tarefa longa|projeto inteiro/.test(lower))
       return 'long_running_task';
     if (/pesquis|buscar sobre|o que é|qual a diferença/.test(lower)) return 'research';
@@ -90,7 +97,16 @@ export class IntentAnalyzerService {
   private suggestTools(intent: IntentType, lower: string): string[] {
     const tools: string[] = [];
 
-    if (['code_analysis', 'architecture_discussion', 'debug', 'planning'].includes(intent)) {
+    const isFsFollowUp =
+      /quantas?\s+pastas?|mais\s+pesad|nessa pasta|e na pasta|downloads?|baixados?|documentos?|desktop|tamanho|por alto/.test(
+        lower,
+      );
+
+    // Never suggest project inspect/rag for personal FS follow-ups
+    if (
+      !isFsFollowUp &&
+      ['code_analysis', 'architecture_discussion', 'debug', 'planning'].includes(intent)
+    ) {
       tools.push('inspect_structure', 'detect_stack', 'search_rag');
     }
     if (/git|commit|branch|diff/.test(lower)) {
@@ -99,13 +115,25 @@ export class IntentAnalyzerService {
     if (/dependência|package\.json|npm/.test(lower)) {
       tools.push('list_dependencies');
     }
-    if (/buscar|encontrar|onde está/.test(lower)) {
+    if (/buscar|encontrar|onde está/.test(lower) && !isFsFollowUp) {
       tools.push('search_files');
     }
     if (/memória|decisão|regra/.test(lower)) {
       tools.push('search_memories');
     }
-    if (intent === 'file_operation') {
+    if (intent === 'file_operation' || isFsFollowUp) {
+      if (/quantas?\s+pastas?|mais\s+pesad|tamanho|por alto/.test(lower)) {
+        tools.push('size_summary');
+      } else {
+        tools.push('list_directory');
+      }
+    }
+    if (
+      /documentos|desktop|downloads|baixados|área de trabalho|area de trabalho|windows|c:\\|d:\\/i.test(
+        lower,
+      ) &&
+      !tools.includes('size_summary')
+    ) {
       tools.push('list_directory');
     }
 

@@ -7,7 +7,8 @@ export type ToolCategory =
   | 'memory'
   | 'rag'
   | 'project'
-  | 'media';
+  | 'media'
+  | 'jobs';
 
 export type RiskLevel = 'low' | 'medium' | 'high' | 'critical';
 
@@ -29,6 +30,23 @@ export interface JsonSchemaProperty {
   enum?: string[];
 }
 
+/** Standard JSON Schema (OpenAI/Ollama function-calling compatible). */
+export interface JsonSchemaObject {
+  type: 'object';
+  properties: Record<string, Omit<JsonSchemaProperty, 'required'>>;
+  required: string[];
+}
+
+/** OpenAI/Ollama-compatible tool descriptor sent in the `tools` payload. */
+export interface OllamaToolSpec {
+  type: 'function';
+  function: {
+    name: string;
+    description: string;
+    parameters: JsonSchemaObject;
+  };
+}
+
 export interface ToolDefinition {
   name: string;
   description: string;
@@ -39,6 +57,19 @@ export interface ToolDefinition {
   async: boolean;
   inputSchema: Record<string, JsonSchemaProperty>;
   outputSchema: Record<string, JsonSchemaProperty>;
+  /**
+   * Whether a persistent "always allow" grant may be created for this tool.
+   * Defaults to true; set false for destructive/high-blast-radius tools so
+   * they can only be approved once at a time. Replaces the old hardcoded
+   * NEVER_ALWAYS_ALLOW list (config-driven per the registry).
+   */
+  allowPersistentGrant?: boolean;
+  /**
+   * Optional runtime availability check. When it returns false, the tool is
+   * hidden from the list exposed to the model (toOllamaTools) so it won't try
+   * to call a capability that isn't configured. Absent → always available.
+   */
+  isAvailable?: () => boolean;
 }
 
 export interface StructuredToolResult {

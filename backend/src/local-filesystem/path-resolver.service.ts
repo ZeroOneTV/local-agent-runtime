@@ -9,6 +9,10 @@ import {
   ResolvedPathInfo,
 } from './local-filesystem.types';
 
+/** Relative labels that must NEVER be joined with project.rootPath. */
+const KNOWN_FOLDER_LABELS =
+  /^(documentos?|documents?|desktop|área de trabalho|area de trabalho|downloads?|baixados?|pictures?|imagens?|fotos?|music|m[uú]sicas?|videos?|v[ií]deos?|home|onedrive)$/i;
+
 @Injectable()
 export class PathResolverService {
   constructor(private readonly fsConfig: LocalFilesystemConfigService) {}
@@ -33,6 +37,10 @@ export class PathResolverService {
     );
   }
 
+  isKnownFolderLabel(p: string): boolean {
+    return KNOWN_FOLDER_LABELS.test(p.trim());
+  }
+
   isHostPath(p: string, projectRoot: string): boolean {
     if (!this.isAbsolute(p)) return false;
     const resolved = path.resolve(this.expandHome(p));
@@ -47,6 +55,17 @@ export class PathResolverService {
   ): ResolvedPathInfo {
     const originalPath = inputPath || '.';
     const expanded = this.expandHome(originalPath);
+
+    // Never map "documentos"/"desktop"/etc. onto project.rootPath
+    if (this.isKnownFolderLabel(expanded) && !this.isAbsolute(expanded)) {
+      return {
+        originalPath,
+        resolvedPath: originalPath,
+        mode,
+        accessLevel: 'blocked',
+        isProjectScoped: false,
+      };
+    }
 
     if (!this.isHostPath(expanded, projectRoot)) {
       const resolved = path.resolve(

@@ -21,19 +21,16 @@ export class OrchestratorConfigService {
     return this.config.get<string>('cognitive.defaultMode') ?? 'assisted_executor';
   }
 
-  get enableReflection(): boolean {
-    return this.config.get<boolean>('cognitive.enableReflection') ?? true;
-  }
-
-  get enableLongJobs(): boolean {
-    return this.config.get<boolean>('cognitive.enableLongJobs') ?? true;
-  }
-
   get eventSystemEnabled(): boolean {
     return this.config.get<boolean>('cognitive.eventSystem') ?? true;
   }
 
   get debug(): boolean {
     return this.config.get<boolean>('cognitive.debug') ?? false;
+  }
+
+  /** Opt-in native Ollama function-calling agent loop. */
+  get nativeToolCalling(): boolean {
+    return this.config.get<boolean>('agentic.nativeToolCalling') ?? false;
   }
 }

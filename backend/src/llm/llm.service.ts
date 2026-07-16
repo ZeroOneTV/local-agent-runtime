@@ -2,16 +2,37 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { SYSTEM_PROMPT } from './prompts/system.prompt';
 import { TOOL_USE_PROMPT } from './prompts/tool-use.prompt';
+import type { OllamaToolSpec } from '../tools/tools.types';
+
+export interface LlmToolCall {
+  /** Present when the model/runtime assigns an id (Ollama may omit it). */
+  id?: string;
+  function: {
+    name: string;
+    arguments: Record<string, unknown>;
+  };
+}
 
 export interface ChatMessage {
   role: 'system' | 'user' | 'assistant' | 'tool';
   content: string;
+  /** Assistant messages may carry structured tool calls (native function-calling). */
+  tool_calls?: LlmToolCall[];
+  /** For role: 'tool' — the id/name of the call this result answers. */
+  tool_call_id?: string;
+  name?: string;
+}
+
+export interface LlmChatOptions {
+  systemContent?: string;
+  tools?: OllamaToolSpec[];
 }
 
 export interface LlmResponse {
   content: string;
   model: string;
   done: boolean;
+  toolCalls?: LlmToolCall[];
 }
 
 @Injectable()
@@ -45,11 +66,23 @@ export class LlmService {
 
   async chat(
     messages: ChatMessage[],
-    systemContent?: string,
+    options?: string | LlmChatOptions,
   ): Promise<LlmResponse> {
-    const prompt: ChatMessage[] = systemContent
-      ? [{ role: 'system', content: systemContent }, ...messages]
+    const opts: LlmChatOptions =
+      typeof options === 'string' ? { systemContent: options } : options ?? {};
+
+    const prompt: ChatMessage[] = opts.systemContent
+      ? [{ role: 'system', content: opts.systemContent }, ...messages]
       : this.buildPrompt(messages);
+
+    const body: Record<string, unknown> = {
+      model: this.model,
+      messages: prompt,
+      stream: false,
+    };
+    if (opts.tools?.length) {
+      body.tools = opts.tools;
+    }
 
     try {
       const controller = new AbortController();
@@ -58,11 +91,7 @@ export class LlmService {
       const response = await fetch(`${this.baseUrl}/api/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: this.model,
-          messages: prompt,
-          stream: false,
-        }),
+        body: JSON.stringify(body),
         signal: controller.signal,
       });
       clearTimeout(timeout);
@@ -78,11 +107,37 @@ export class LlmService {
         content: data.message?.content || '',
         model: data.model || this.model,
         done: data.done ?? true,
+        toolCalls: this.parseToolCalls(data.message?.tool_calls),
       };
     } catch (error) {
       this.logger.error(`Failed to reach LLM at ${this.baseUrl}`, error);
       throw error;
     }
+  }
+
+  private parseToolCalls(raw: unknown): LlmToolCall[] | undefined {
+    if (!Array.isArray(raw) || raw.length === 0) return undefined;
+    const calls: LlmToolCall[] = [];
+    for (const item of raw) {
+      const fn = (item as { function?: { name?: string; arguments?: unknown } })
+        .function;
+      if (!fn?.name) continue;
+      let args: Record<string, unknown> = {};
+      if (typeof fn.arguments === 'string') {
+        try {
+          args = JSON.parse(fn.arguments) as Record<string, unknown>;
+        } catch {
+          args = {};
+        }
+      } else if (fn.arguments && typeof fn.arguments === 'object') {
+        args = fn.arguments as Record<string, unknown>;
+      }
+      calls.push({
+        id: (item as { id?: string }).id,
+        function: { name: fn.name, arguments: args },
+      });
+    }
+    return calls.length ? calls : undefined;
   }
 
   async healthCheck(): Promise<boolean> {

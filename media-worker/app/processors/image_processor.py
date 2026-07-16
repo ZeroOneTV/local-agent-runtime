@@ -9,12 +9,17 @@ from app.config import (
     GENERATE_THUMBNAILS,
     MAX_BYTES,
     MAX_HEIGHT,
+    MAX_TAG_SOURCE_WORDS,
+    MAX_TAGS,
     MAX_WIDTH,
     OCR_LANGUAGES,
     STORAGE_ROOT,
     THUMBNAIL_FORMAT,
+    THUMBNAIL_MAX_SIZE,
+    THUMBNAIL_QUALITY,
     ENABLE_TESSERACT_FALLBACK,
 )
+from app.image_type_keywords import DETECTION_ORDER, load_keywords
 from app.providers.document.docling_provider import DoclingProvider
 from app.providers.layout.paddle_structure_provider import PaddleStructureProvider
 from app.providers.ocr.paddleocr_provider import PaddleOCRProvider
@@ -39,36 +44,39 @@ def _sha256_file(path: Path) -> str:
 
 
 def _detect_image_type(ocr_text: str, vision_hint: str | None = None) -> str:
+    # VLM hint é a fonte preferida quando disponível; a heurística abaixo é
+    # apenas o fallback (keywords externalizadas, parametrizáveis por idioma).
     if vision_hint and vision_hint != 'unknown':
         return vision_hint
+
     lower = ocr_text.lower()
-    if re.search(r'error|exception|traceback|failed', lower):
-        return 'error_screenshot'
-    if re.search(r'button|menu|settings|dashboard|ui|sidebar', lower):
-        return 'ui_screenshot'
-    if re.search(r'diagram|flowchart|sequence|architecture', lower):
-        return 'diagram'
-    if re.search(r'def |class |import |function ', lower):
-        return 'code_screenshot'
+    keywords = load_keywords()
+
+    for image_type in DETECTION_ORDER:
+        for kw in keywords.get(image_type, []):
+            if kw and kw in lower:
+                # document_scan tem prioridade sobre "chart" quando há muito texto
+                if image_type == 'chart' and len(ocr_text) > 400:
+                    return 'document_scan'
+                return image_type
+
     if len(ocr_text) > 400:
         return 'document_scan'
-    if re.search(r'chart|table|graph', lower):
-        return 'chart'
     if ocr_text.strip():
         return 'ui_screenshot'
     return 'photo'
 
 
 def _extract_tags(text: str, extra: list[str] | None = None) -> list[str]:
-    words = re.findall(r'[A-Za-z][A-Za-z0-9_-]{2,}', text)
+    words = re.findall(r'[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ0-9_-]{2,}', text)
     seen: set[str] = set()
     tags: list[str] = []
-    for w in ([*(extra or [])] + words[:30]):
+    for w in ([*(extra or [])] + words[:MAX_TAG_SOURCE_WORDS]):
         k = w.lower()
         if k not in seen:
             seen.add(k)
             tags.append(k)
-    return tags[:15]
+    return tags[:MAX_TAGS]
 
 
 def _build_cache_key(meta: ImageMetadata, mode: str, providers: ProviderInfo) -> str:
@@ -135,9 +143,9 @@ def process_image_request(req: ProcessRequest) -> ImageProcessingResult:
             ext = 'webp' if THUMBNAIL_FORMAT == 'webp' else 'jpg'
             thumb_path = thumb_dir / f'{req.mediaId}.{ext}'
             thumb = img.copy()
-            thumb.thumbnail((320, 320))
+            thumb.thumbnail((THUMBNAIL_MAX_SIZE, THUMBNAIL_MAX_SIZE))
             save_fmt = 'WEBP' if ext == 'webp' else 'JPEG'
-            thumb.save(thumb_path, format=save_fmt, quality=85)
+            thumb.save(thumb_path, format=save_fmt, quality=THUMBNAIL_QUALITY)
             thumbnail_path = str(thumb_path)
 
         ocr_data, ocr_warnings, perf.ocrMs, ocr_provider = _run_ocr(img, req.mode)
@@ -174,16 +182,9 @@ def process_image_request(req: ProcessRequest) -> ImageProcessingResult:
         document_data = {'markdown': None, 'tables': []}
         document_provider_name = 'skipped'
 
+        # Classificação inicial pela heurística (fallback). Se o VLM estiver
+        # habilitado, ele roda ANTES do Docling e o hint dele tem prioridade.
         image_type = _detect_image_type(full_text)
-
-        if caps.document and req.mode == 'full':
-            doc_engine = DoclingProvider()
-            if doc_engine.should_run(image_type, req.mode):
-                doc_result = doc_engine.process(path, image_type, req.mode)
-                document_data = doc_result.data
-                document_provider_name = doc_result.provider
-                perf.documentMs = doc_result.duration_ms
-                warnings.extend(doc_result.warnings)
 
         enable_vlm = req.enableVlm or (caps.vision is True) or (caps.vision == 'auto')
         if enable_vlm:
@@ -202,8 +203,19 @@ def process_image_request(req: ProcessRequest) -> ImageProcessingResult:
                     'uiElements': vlm_result.data.get('uiElements', []),
                     'relationships': vlm_result.data.get('relationships', []),
                 }
+                # Hint do VLM é fonte preferida de classificação sobre a regex.
                 vision_hint = vlm_result.data.get('imageTypeHint')
                 image_type = _detect_image_type(full_text, vision_hint)
+
+        # Docling decide com base no image_type já informado pelo VLM (quando houve).
+        if caps.document and req.mode == 'full':
+            doc_engine = DoclingProvider()
+            if doc_engine.should_run(image_type, req.mode):
+                doc_result = doc_engine.process(path, image_type, req.mode)
+                document_data = doc_result.data
+                document_provider_name = doc_result.provider
+                perf.documentMs = doc_result.duration_ms
+                warnings.extend(doc_result.warnings)
 
         tags = _extract_tags(full_text, vision_data.get('objects', []))
         entities = [t for t in tags if t[0].isupper()] if tags else []
@@ -214,10 +226,10 @@ def process_image_request(req: ProcessRequest) -> ImageProcessingResult:
         elif vision_data.get('summary'):
             summary_parts.append(str(vision_data['summary'])[:240])
         else:
-            summary_parts.append(f'Image ({image_type}) without readable text.')
+            summary_parts.append(f'Imagem ({image_type}) sem texto legível.')
 
         if image_type == 'error_screenshot' and full_text:
-            summary = 'Screenshot showing an error message. ' + summary_parts[0][:180]
+            summary = 'Captura de tela com mensagem de erro. ' + summary_parts[0][:180]
         else:
             summary = summary_parts[0]
 

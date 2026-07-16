@@ -1,0 +1,24 @@
+{
+  "_comment": "Palavras-chave para classificação heurística de tipo de imagem (fallback quando o VLM está desabilitado). Parametrizável por idioma. Sobrescreva via MEDIA_IMAGE_TYPE_KEYWORDS_PATH. Ordem = prioridade.",
+  "error_screenshot": [
+    "error", "exception", "traceback", "failed", "failure", "stack trace",
+    "erro", "exceção", "excecao", "falha", "falhou", "não foi possível", "nao foi possivel"
+  ],
+  "ui_screenshot": [
+    "button", "menu", "settings", "dashboard", "sidebar", "toolbar", "login", "sign in",
+    "botão", "botao", "menu", "configurações", "configuracoes", "painel",
+    "barra lateral", "entrar", "cadastrar", "salvar", "cancelar"
+  ],
+  "diagram": [
+    "diagram", "flowchart", "sequence", "architecture", "workflow",
+    "diagrama", "fluxograma", "sequência", "sequencia", "arquitetura", "fluxo"
+  ],
+  "code_screenshot": [
+    "def ", "class ", "import ", "function ", "const ", "return ", "public ", "void ",
+    "função ", "funcao ", "classe ", "retornar "
+  ],
+  "chart": [
+    "chart", "table", "graph", "axis", "legend",
+    "gráfico", "grafico", "tabela", "eixo", "legenda", "coluna", "linha"
+  ]
+}

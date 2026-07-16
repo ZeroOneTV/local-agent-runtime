@@ -90,4 +90,24 @@ export class FileSystemService {
   ): Promise<StructuredToolResult> {
     return this.localFs.stat(rootPath, filePath, this.ctx(rootPath, extra));
   }
+
+  sizeSummary(
+    rootPath: string,
+    dirPath: string,
+    options: {
+      includeFiles?: boolean;
+      includeDirectories?: boolean;
+      recursive?: boolean;
+      maxDepth?: number;
+      maxEntries?: number;
+    } = {},
+    extra?: FsCtx,
+  ): Promise<StructuredToolResult> {
+    return this.localFs.sizeSummary(
+      rootPath,
+      dirPath || '.',
+      options,
+      this.ctx(rootPath, extra),
+    );
+  }
 }

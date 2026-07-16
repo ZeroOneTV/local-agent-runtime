@@ -18,7 +18,8 @@ export type FilesystemOperation =
   | 'search'
   | 'write'
   | 'delete'
-  | 'stat';
+  | 'stat'
+  | 'size_summary';
 
 export interface FilesystemMount {
   hostPrefix: string;

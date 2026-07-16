@@ -15,7 +15,7 @@ import { ToolsModule } from '../tools/tools.module';
     BullModule.registerQueue({ name: 'orchestrator-jobs' }),
     RagModule,
     LlmModule,
-    ToolsModule,
+    forwardRef(() => ToolsModule),
     forwardRef(() => OrchestratorModule),
   ],
   providers: [

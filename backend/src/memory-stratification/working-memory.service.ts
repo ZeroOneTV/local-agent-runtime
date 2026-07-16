@@ -119,6 +119,11 @@ export class WorkingMemoryService implements OnModuleDestroy {
     if (state.activeFiles?.length) {
       parts.push(`Arquivos em foco: ${state.activeFiles.join(', ')}`);
     }
+    if (state.activeTarget?.path) {
+      parts.push(
+        `Pasta/arquivo ativo (activeTarget): ${state.activeTarget.label || state.activeTarget.path} → ${state.activeTarget.path} [${state.activeTarget.source}]`,
+      );
+    }
     if (state.activeJobId) parts.push(`Job ativo: ${state.activeJobId}`);
     if (state.pendingApprovals?.length) {
       parts.push(`Aprovações pendentes: ${state.pendingApprovals.join('; ')}`);

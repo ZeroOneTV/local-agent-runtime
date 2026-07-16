@@ -9,10 +9,19 @@ app = FastAPI(title='Media Worker', version='0.2.0')
 @app.get('/health')
 def health():
     from app.providers.ocr.paddleocr_provider import PaddleOCRProvider
+    from app.providers.ocr.tesseract_provider import TesseractProvider
+    from app.providers.layout.paddle_structure_provider import PaddleStructureProvider
     from app.providers.document.docling_provider import DoclingProvider
     from app.providers.vision.ollama_vision_provider import OllamaVisionProvider
-    from app.config import ENABLE_VLM, ENABLE_PADDLEOCR, ENABLE_DOCLING, ENABLE_PP_STRUCTURE
+    from app.config import (
+        ENABLE_VLM,
+        ENABLE_PADDLEOCR,
+        ENABLE_TESSERACT_FALLBACK,
+        ENABLE_DOCLING,
+        ENABLE_PP_STRUCTURE,
+    )
 
+    # Todos os providers reportam enabled + available (contrato uniforme).
     return {
         'status': 'ok',
         'providers': {
@@ -20,7 +29,14 @@ def health():
                 'enabled': ENABLE_PADDLEOCR,
                 'available': PaddleOCRProvider().is_available(),
             },
-            'ppStructure': {'enabled': ENABLE_PP_STRUCTURE},
+            'tesseract': {
+                'enabled': ENABLE_TESSERACT_FALLBACK,
+                'available': TesseractProvider().is_available(),
+            },
+            'ppStructure': {
+                'enabled': ENABLE_PP_STRUCTURE,
+                'available': PaddleStructureProvider().is_available(),
+            },
             'docling': {
                 'enabled': ENABLE_DOCLING,
                 'available': DoclingProvider().is_available(),

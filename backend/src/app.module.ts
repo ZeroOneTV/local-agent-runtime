@@ -22,6 +22,7 @@ import { MemoryStratificationModule } from './memory-stratification/memory-strat
 import { RuntimeModule } from './runtime/runtime.module';
 import { ProcessorsModule } from './runtime/processors.module';
 import { LocalFilesystemModule } from './local-filesystem/local-filesystem.module';
+import { AgenticToolsModule } from './agentic-tools/agentic-tools.module';
 import { shouldRunAnyProcessor } from './runtime/app-role.util';
 
 const processorImports = shouldRunAnyProcessor() ? [ProcessorsModule] : [];
@@ -48,6 +49,7 @@ const processorImports = shouldRunAnyProcessor() ? [ProcessorsModule] : [];
     FilesModule,
     QueueModule,
     SecurityModule,
+    AgenticToolsModule,
     OrchestratorModule,
     OpenWebuiModule,
     JobsModule,

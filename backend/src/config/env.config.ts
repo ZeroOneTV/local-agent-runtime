@@ -70,12 +70,28 @@ export const envConfig = () => ({
     commandTimeoutMs: parseInt(process.env.TOOL_COMMAND_TIMEOUT_MS || '30000', 10),
     fetchTimeoutMs: parseInt(process.env.TOOL_FETCH_TIMEOUT_MS || '10000', 10),
   },
+  // Outbound internet access (web_search / fetch_url). Everything is opt-in:
+  // this is a local/private assistant, so outgoing traffic is never a silent
+  // default — the operator must consciously enable it.
+  web: {
+    // Master switch for the web_search tool.
+    searchEnabled: process.env.WEB_SEARCH_ENABLED === 'true',
+    // disabled | searxng | brave
+    searchProvider: (process.env.WEB_SEARCH_PROVIDER || 'disabled').toLowerCase(),
+    searxngUrl: process.env.WEB_SEARCH_SEARXNG_URL || '',
+    braveApiKey: process.env.WEB_SEARCH_BRAVE_API_KEY || '',
+    searchMaxResults: parseInt(process.env.WEB_SEARCH_MAX_RESULTS || '5', 10),
+    searchTimeoutMs: parseInt(process.env.WEB_SEARCH_TIMEOUT_MS || '10000', 10),
+    // Separate master switch for fetch_url (reading arbitrary public pages).
+    fetchEnabled: process.env.WEB_FETCH_ENABLED === 'true',
+    fetchMaxBytes: parseInt(process.env.WEB_FETCH_MAX_BYTES || '2000000', 10),
+  },
   cognitive: {
     maxCycles: parseInt(process.env.COGNITIVE_MAX_CYCLES || '8', 10),
     maxConsecutiveTools: parseInt(process.env.COGNITIVE_MAX_CONSECUTIVE_TOOLS || '3', 10),
     requireMemoryConfirmation: process.env.COGNITIVE_REQUIRE_MEMORY_CONFIRMATION !== 'false',
     defaultMode: process.env.COGNITIVE_DEFAULT_MODE || 'assisted_executor',
-    enableReflection: process.env.COGNITIVE_ENABLE_REFLECTION !== 'false',
+    // Gates the model-called `enqueue_long_job` tool (native tool-calling).
     enableLongJobs: process.env.COGNITIVE_ENABLE_LONG_JOBS !== 'false',
     eventSystem: process.env.COGNITIVE_EVENT_SYSTEM !== 'false',
     debug: process.env.COGNITIVE_DEBUG === 'true',
@@ -157,6 +173,11 @@ export const envConfig = () => ({
   hostFilesystem: {
     enabled: process.env.HOST_FILESYSTEM_ENABLED === 'true',
     mode: process.env.HOST_FILESYSTEM_MODE || 'disabled',
+    discoveryEnabled: process.env.HOST_FILESYSTEM_DISCOVERY_ENABLED !== 'false',
+    allowDriveDiscovery:
+      process.env.HOST_FILESYSTEM_ALLOW_DRIVE_DISCOVERY !== 'false',
+    allowHomeDiscovery:
+      process.env.HOST_FILESYSTEM_ALLOW_HOME_DISCOVERY !== 'false',
     allowBrowse: process.env.HOST_FILESYSTEM_ALLOW_BROWSE !== 'false',
     allowRead: process.env.HOST_FILESYSTEM_ALLOW_READ !== 'false',
     allowWrite: process.env.HOST_FILESYSTEM_ALLOW_WRITE === 'true',
@@ -169,9 +190,48 @@ export const envConfig = () => ({
     allowedDrives: process.env.HOST_FILESYSTEM_ALLOWED_DRIVES || '',
     defaultAccess: process.env.HOST_FILESYSTEM_DEFAULT_ACCESS || 'read',
     mounts: parseFilesystemMounts(process.env.HOST_FILESYSTEM_MOUNTS_JSON),
+    userHome: process.env.HOST_USER_HOME || '',
+    documentsPath: process.env.HOST_DOCUMENTS_PATH || '',
+    desktopPath: process.env.HOST_DESKTOP_PATH || '',
+    downloadsPath: process.env.HOST_DOWNLOADS_PATH || '',
+    picturesPath: process.env.HOST_PICTURES_PATH || '',
+    musicPath: process.env.HOST_MUSIC_PATH || '',
+    videosPath: process.env.HOST_VIDEOS_PATH || '',
     hostAgentBaseUrl:
       process.env.HOST_AGENT_BASE_URL || 'http://host.docker.internal:3847',
     hostAgentTimeoutMs: parseInt(process.env.HOST_AGENT_TIMEOUT_MS || '30000', 10),
+  },
+  agentic: {
+    enabled: process.env.AGENTIC_TOOL_USE !== 'false',
+    autoExecuteReadonly: process.env.AGENTIC_AUTO_EXECUTE_READONLY !== 'false',
+    // Native Ollama function-calling agent loop (opt-in; requires a tool-capable model).
+    nativeToolCalling: process.env.AGENTIC_NATIVE_TOOLCALLING === 'true',
+    // Write/execution inside the project rootPath may auto-run in autonomous mode.
+    projectSandboxAutoWrite:
+      process.env.AGENTIC_PROJECT_SANDBOX_AUTO_WRITE !== 'false',
+    requireApprovalForWrite:
+      process.env.AGENTIC_REQUIRE_APPROVAL_FOR_WRITE !== 'false',
+    requireApprovalForDelete:
+      process.env.AGENTIC_REQUIRE_APPROVAL_FOR_DELETE !== 'false',
+    requireApprovalForShell:
+      process.env.AGENTIC_REQUIRE_APPROVAL_FOR_SHELL !== 'false',
+    requireApprovalForExternal:
+      process.env.AGENTIC_REQUIRE_APPROVAL_FOR_EXTERNAL !== 'false',
+    autoToolMaxCallsPerTurn: parseInt(
+      process.env.AUTO_TOOL_MAX_CALLS_PER_TURN || '3',
+      10,
+    ),
+    autoToolTimeoutMs: parseInt(process.env.AUTO_TOOL_TIMEOUT_MS || '30000', 10),
+    autoToolMaxOutputKb: parseInt(process.env.AUTO_TOOL_MAX_OUTPUT_KB || '64', 10),
+    approvalBaseUrl:
+      process.env.APPROVAL_BASE_URL ||
+      process.env.OPENWEBUI_APPROVALS_BASE_URL ||
+      'http://localhost:3001',
+    grantsEnabled: process.env.TOOL_GRANTS_ENABLED !== 'false',
+    grantsDefaultTtlHours: parseInt(
+      process.env.TOOL_GRANTS_DEFAULT_TTL_HOURS || '24',
+      10,
+    ),
   },
 });
 

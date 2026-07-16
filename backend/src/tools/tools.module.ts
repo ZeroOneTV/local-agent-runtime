@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { ToolsController } from './tools.controller';
 import { ToolRegistryService } from './tool-registry.service';
 import { ToolRouterService } from './tool-router.service';
@@ -9,6 +9,8 @@ import { GitService } from './services/git.service';
 import { TerminalService } from './services/terminal.service';
 import { ProjectInspectService } from './services/project.service';
 import { BrowserService } from './services/browser.service';
+import { NetGuardService } from './services/net-guard.service';
+import { WebSearchService } from './services/web-search/web-search.service';
 import { MemoryModule } from '../memory/memory.module';
 import { RagModule } from '../rag/rag.module';
 import { QueueModule } from '../queue/queue.module';
@@ -17,6 +19,7 @@ import { MediaModule } from '../media/media.module';
 import { StorageModule } from '../storage/storage.module';
 import { RuntimeModule } from '../runtime/runtime.module';
 import { LocalFilesystemModule } from '../local-filesystem/local-filesystem.module';
+import { JobsModule } from '../jobs/jobs.module';
 
 @Module({
   imports: [
@@ -28,6 +31,7 @@ import { LocalFilesystemModule } from '../local-filesystem/local-filesystem.modu
     StorageModule,
     RuntimeModule,
     LocalFilesystemModule,
+    forwardRef(() => JobsModule),
   ],
   controllers: [ToolsController],
   providers: [
@@ -37,6 +41,8 @@ import { LocalFilesystemModule } from '../local-filesystem/local-filesystem.modu
     TerminalService,
     ProjectInspectService,
     BrowserService,
+    NetGuardService,
+    WebSearchService,
     ToolRegistryService,
     ToolRouterService,
     ToolExecutionService,

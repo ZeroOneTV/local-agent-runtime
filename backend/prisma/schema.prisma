@@ -43,6 +43,7 @@ model Project {
   memoryAccessLogs     MemoryAccessLog[]
   memoryPortabilityRecords MemoryPortabilityRecord[]
   filesystemPermissions ProjectFilesystemPermission[]
+  toolPermissionGrants ToolPermissionGrant[]
 
   @@map("projects")
 }
@@ -346,6 +347,30 @@ model ToolCall {
 
   @@index([conversationId])
   @@map("tool_calls")
+}
+
+model ToolPermissionGrant {
+  id             String    @id @default(uuid()) @db.Uuid
+  projectId      String    @map("project_id") @db.Uuid
+  conversationId String?   @map("conversation_id") @db.Uuid
+  userId         String?   @map("user_id") @db.Uuid
+  toolName       String    @map("tool_name")
+  grantType      String    @map("grant_type")
+  scopeType      String    @map("scope_type")
+  pathPrefix     String?   @map("path_prefix")
+  commandPattern String?   @map("command_pattern")
+  riskLevel      String    @map("risk_level")
+  expiresAt      DateTime? @map("expires_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  revokedAt      DateTime? @map("revoked_at")
+  metadata       Json?
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, toolName])
+  @@index([conversationId])
+  @@index([expiresAt])
+  @@map("tool_permission_grants")
 }
 
 model ToolResult {
