@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service';
 import { ContextService } from '../context/context.service';
 import { LlmService } from '../llm/llm.service';
+import { PromptTemplateService } from '../llm/prompts/prompt-template.service';
 import { SummaryService } from '../context/summary.service';
 import { IntentAnalyzerService } from './intent-analyzer.service';
 import { MemoryDecisionService } from './memory-decision.service';
@@ -9,7 +10,10 @@ import { EventService } from './event.service';
 import { OrchestratorConfigService } from './orchestrator.config';
 import { WorkingMemoryService } from '../memory-stratification/working-memory.service';
 import { MemoryEtlService } from '../memory-stratification/memory-etl.service';
-import { NativeToolLoopService } from '../agentic-tools/native-tool-loop.service';
+import {
+  NativeToolLoopService,
+  NativeToolLoopEvent,
+} from '../agentic-tools/native-tool-loop.service';
 import { AgenticToolPolicyService } from '../agentic-tools/agentic-tool-policy.service';
 import { HostFilesystemDiscoveryService } from '../local-filesystem/host-filesystem-discovery.service';
 import { ToolRegistryService } from '../tools/tool-registry.service';
@@ -24,6 +28,12 @@ export interface ProcessMessageInput {
   message: string;
   userId?: string;
   debug?: boolean;
+  /**
+   * Optional real-time progress callback, forwarded to the native tool loop so
+   * the streaming controller can surface text/tool activity as it happens.
+   * Purely a pipe — no business logic depends on it.
+   */
+  onEvent?: (event: NativeToolLoopEvent) => void;
 }
 
 @Injectable()
@@ -45,6 +55,7 @@ export class CognitiveOrchestratorService {
     private readonly agenticPolicy: AgenticToolPolicyService,
     private readonly discovery: HostFilesystemDiscoveryService,
     private readonly toolRegistry: ToolRegistryService,
+    private readonly promptTemplates: PromptTemplateService,
   ) {}
 
   async processMessage(input: ProcessMessageInput): Promise<OrchestratorResult> {
@@ -177,6 +188,7 @@ export class CognitiveOrchestratorService {
         conversationId: input.conversationId,
         userId: input.userId,
         projectRoot,
+        onEvent: input.onEvent,
       });
     } catch (error) {
       this.logger.error('Native tool loop failed', error as Error);
@@ -289,11 +301,12 @@ export class CognitiveOrchestratorService {
   /** Dynamic system instruction reflecting the real execution mode. */
   private buildNativeSystemPrompt(): string {
     const mode = this.agenticPolicy.executionMode;
+    // Parte customizável (persona + orientação de tools) vem de arquivos
+    // editáveis com fallback embutido. Daqui pra baixo é estado real do
+    // sistema (modo, pastas descobertas) e continua gerado em código.
     const lines = [
-      'Você é um assistente local com acesso a ferramentas (tools) via function-calling.',
-      'Chame as tools necessárias para agir; não peça permissão em texto — a camada de segurança do host decide sozinha se uma chamada roda direto ou precisa de aprovação.',
-      'Quando tiver os resultados das tools, responda ao usuário de forma clara e objetiva em português.',
-      'Pastas pessoais do Windows (Documentos, Desktop, Downloads, C:\\...) NÃO são o root do projeto — use caminhos absolutos do host para elas.',
+      this.promptTemplates.getPersona(),
+      this.promptTemplates.getToolGuidance(),
     ];
     if (mode === 'safe') {
       lines.push('Modo atual: SAFE — apenas leitura executa automaticamente; escrita/execução será revisada por um humano.');
@@ -336,6 +349,9 @@ export class CognitiveOrchestratorService {
       }
       lines.push(
         'Ex.: para "meus documentos do Windows", chame list_directory com o path de "Documentos" acima. Nunca invente caminho nem use path relativo para pastas pessoais.',
+      );
+      lines.push(
+        'Essas são as únicas pastas pessoais conhecidas neste computador. Não invente nem deduza outros caminhos (ex.: uma pasta "Games", "Músicas de trabalho", etc.) por analogia — se o usuário mencionar algo que não está nessa lista e for necessário localizar, pergunte o caminho em vez de adivinhar.',
       );
     }
 

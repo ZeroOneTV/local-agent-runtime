@@ -169,6 +169,33 @@ Em modo debug (`COGNITIVE_DEBUG=true` ou `debug: true` no `/orchestrator/chat`),
 
 ---
 
+## Customizando o comportamento do assistente
+
+A persona (tom, idioma, estilo) e a orientação de uso de tools ficam em arquivos de texto editáveis, **fora do código compilado** — dá pra ajustar sem rebuildar o TypeScript:
+
+```
+backend/prompts/
+  persona.example.md         # versionado — ponto de partida
+  tool-guidance.example.md   # versionado — ponto de partida
+  persona.md                 # seu (não versionado) — opcional
+  tool-guidance.md           # seu (não versionado) — opcional
+```
+
+Como usar (convenção parecida com `.env.example` → `.env`):
+
+```bash
+cp backend/prompts/persona.example.md backend/prompts/persona.md
+cp backend/prompts/tool-guidance.example.md backend/prompts/tool-guidance.md
+# edite os .md e a próxima mensagem já reflete a mudança (sem restart)
+```
+
+- **Fallback embutido:** se os arquivos `.md` não existirem, estiverem vazios ou ilegíveis, o sistema usa o texto padrão embutido (`DEFAULT_PERSONA` / `DEFAULT_TOOL_GUIDANCE` em `src/llm/prompts/prompt-template.service.ts`). Uma instalação nova funciona sem nenhum passo extra.
+- **Sem cache:** o arquivo é relido a cada mensagem, então editar reflete na hora.
+- **`PROMPTS_DIR`:** variável de ambiente opcional para apontar o diretório de prompts para outro lugar (ex.: um volume Docker dedicado).
+- **O que NÃO é customizável por arquivo (fica em código):** o bloco de **modo de execução** (`SAFE`/`ASSISTIDO`/`AUTÔNOMO`) e a **lista de pastas conhecidas** são gerados a partir do estado real do backend — se virassem texto solto, o prompt poderia "mentir" pro modelo sobre o que de fato vai ser aprovado. A decisão de aprovação é sempre do host (`AgenticToolPolicyService`), nunca do texto: mesmo editando `tool-guidance.md`, mantenha claro que o modelo não promete/nega aprovação por conta própria.
+
+---
+
 ## RAG e memória
 
 ### RAG (Retrieval-Augmented Generation)

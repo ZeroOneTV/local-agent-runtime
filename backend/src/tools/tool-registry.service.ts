@@ -182,14 +182,22 @@ export class ToolRegistryService implements OnModuleInit {
     this.register(
       {
         name: 'stat',
-        description: 'Retorna metadados de um arquivo ou diretório.',
+        description:
+          'Retorna metadados de um arquivo ou diretório (tipo, tamanho, data de modificação). ' +
+          'Para diretórios, inclui entryCount/isEmpty — use isso, não o campo "size", para saber ' +
+          'se uma pasta está vazia. Para listar o que tem dentro, use list_directory.',
         category: 'filesystem',
         kind: 'readonly',
         riskLevel: 'low',
         requiresApproval: false,
         async: false,
         inputSchema: schema({ path: { type: 'string', required: true } }),
-        outputSchema: schema({ type: { type: 'string' }, size: { type: 'string' } }),
+        outputSchema: schema({
+          type: { type: 'string' },
+          size: { type: 'string' },
+          entryCount: { type: 'number', description: 'Só para diretórios' },
+          isEmpty: { type: 'boolean', description: 'Só para diretórios' },
+        }),
       },
       exec((a, c) => this.fs.stat(c.rootPath, a.path as string, fsCtx(c))),
     );

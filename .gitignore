@@ -47,3 +47,7 @@ npm-debug.log*
 
 # Design specs removidos do repo (conteúdo consolidado no README)
 mds/
+
+# Prompts customizáveis por instalação (só os .example.md são versionados)
+backend/prompts/*.md
+!backend/prompts/*.example.md

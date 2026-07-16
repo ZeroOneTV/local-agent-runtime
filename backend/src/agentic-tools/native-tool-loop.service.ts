@@ -13,6 +13,18 @@ import { ToolApprovalService } from './tool-approval.service';
 import { ToolResultSummarizerService } from './tool-result-summarizer.service';
 import { AgenticAction } from './types/agentic-action.types';
 
+/**
+ * Real-time events emitted by the tool loop as it runs, so callers (the
+ * streaming controller) can surface progress at the moment it happens instead
+ * of only after the whole loop finishes. Purely additive: the consolidated
+ * NativeToolLoopResult is still returned as before.
+ */
+export type NativeToolLoopEvent =
+  | { type: 'text'; content: string }
+  | { type: 'tool_call'; tool: string; args: Record<string, unknown> }
+  | { type: 'tool_result'; tool: string; success: boolean; summary: string }
+  | { type: 'pending_approval'; message: string };
+
 export interface NativeToolLoopInput {
   messages: ChatMessage[];
   systemContent: string;
@@ -20,6 +32,8 @@ export interface NativeToolLoopInput {
   conversationId: string;
   userId?: string;
   projectRoot: string;
+  /** Optional real-time progress callback (see NativeToolLoopEvent). */
+  onEvent?: (event: NativeToolLoopEvent) => void;
 }
 
 export interface NativeToolInvocation {
@@ -95,11 +109,33 @@ export class NativeToolLoopService {
       model = response.model;
       content = response.content;
 
-      const calls = response.toolCalls;
+      let calls = response.toolCalls;
       if (!calls?.length) {
-        // Model produced a final textual answer.
-        finalized = true;
-        break;
+        // Some tool-capable models occasionally emit a well-formed tool call
+        // as plain text (e.g. a ```json {"name":...,"arguments":{...}}``` block)
+        // instead of using Ollama's native tool_calls field. Recover it here —
+        // this is strict JSON-shape matching against real registered tools,
+        // not NL/regex guessing, and only kicks in when native tool-calling
+        // didn't fire on its own.
+        const fallback = this.tryParseFallbackToolCalls(response.content);
+        if (!fallback?.length) {
+          // Genuinely a final textual answer — stream it as it arrives.
+          finalized = true;
+          if (response.content) {
+            input.onEvent?.({ type: 'text', content: response.content });
+          }
+          break;
+        }
+        calls = fallback;
+        // The "content" here was actually the tool-call JSON, not narration —
+        // don't surface it to the user as text.
+        content = '';
+        this.logger.warn(
+          `Modelo emitiu tool call como texto em vez de tool_calls nativo — recuperado via fallback JSON (${fallback.map((c) => c.function.name).join(', ')}).`,
+        );
+      } else if (response.content) {
+        // Native tool call that also came with narration text — surface it now.
+        input.onEvent?.({ type: 'text', content: response.content });
       }
 
       // Record the assistant turn (with its tool calls) in the transcript.
@@ -112,7 +148,7 @@ export class NativeToolLoopService {
       let hadPending = false;
 
       for (const call of calls) {
-        const outcome = await this.handleToolCall(call, input);
+        const outcome = await this.handleToolCall(call, input, input.onEvent);
         invocations.push(outcome.invocation);
         messages.push(outcome.toolMessage);
         if (outcome.pending) {
@@ -142,6 +178,7 @@ export class NativeToolLoopService {
         if (finalResponse.content) {
           content = finalResponse.content;
           model = finalResponse.model;
+          input.onEvent?.({ type: 'text', content: finalResponse.content });
         }
       } catch (e) {
         this.logger.warn(
@@ -158,6 +195,7 @@ export class NativeToolLoopService {
   private async handleToolCall(
     call: LlmToolCall,
     input: NativeToolLoopInput,
+    onEvent?: (event: NativeToolLoopEvent) => void,
   ): Promise<{
     invocation: NativeToolInvocation;
     toolMessage: ChatMessage;
@@ -215,6 +253,7 @@ export class NativeToolLoopService {
         grantOptions: decision.grantOptions,
       });
       const msg = `Aguardando aprovação do usuário para ${toolName}.`;
+      onEvent?.({ type: 'pending_approval', message: created.message });
       return {
         invocation: { tool: toolName, decision: decision.decision, summary: msg },
         toolMessage: this.toolMessage(call, toolName, msg),
@@ -223,6 +262,7 @@ export class NativeToolLoopService {
     }
 
     // auto_execute
+    onEvent?.({ type: 'tool_call', tool: toolName, args });
     const started = Date.now();
     let result: StructuredToolResult | undefined;
     let summary: string;
@@ -247,6 +287,8 @@ export class NativeToolLoopService {
       summary = `Erro ao executar ${toolName}: ${e instanceof Error ? e.message : String(e)}`;
     }
 
+    onEvent?.({ type: 'tool_result', tool: toolName, success, summary });
+
     return {
       invocation: {
         tool: toolName,
@@ -258,6 +300,43 @@ export class NativeToolLoopService {
       },
       toolMessage: this.toolMessage(call, toolName, summary),
     };
+  }
+
+  /**
+   * Detects a tool call the model wrote out as text instead of using native
+   * function-calling. Only matches a strict `{"name": "...", "arguments": {...}}`
+   * shape (optionally inside a ```json fence, optionally as an array of these),
+   * and only accepts it if `name` is a real registered tool — anything else is
+   * left alone and returned to the user as a normal answer.
+   */
+  private tryParseFallbackToolCalls(text: string): LlmToolCall[] | undefined {
+    const trimmed = (text || '').trim();
+    if (!trimmed) return undefined;
+
+    const fenceMatch = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+    const candidate = fenceMatch ? fenceMatch[1].trim() : trimmed;
+
+    // Cheap guard before attempting JSON.parse on arbitrary prose.
+    if (!candidate.startsWith('{') && !candidate.startsWith('[')) return undefined;
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(candidate);
+    } catch {
+      return undefined;
+    }
+
+    const items = Array.isArray(parsed) ? parsed : [parsed];
+    const calls: LlmToolCall[] = [];
+    for (const item of items) {
+      if (!item || typeof item !== 'object') return undefined;
+      const name = (item as { name?: unknown }).name;
+      const args = (item as { arguments?: unknown }).arguments;
+      if (typeof name !== 'string' || !this.registry.getDefinition(name)) return undefined;
+      if (args !== undefined && (typeof args !== 'object' || args === null)) return undefined;
+      calls.push({ function: { name, arguments: (args as Record<string, unknown>) || {} } });
+    }
+    return calls.length ? calls : undefined;
   }
 
   private toolMessage(

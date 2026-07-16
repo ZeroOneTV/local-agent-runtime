@@ -34,6 +34,27 @@ export class ConversationsService {
     });
   }
 
+  /**
+   * Finds a conversation by matching its first user message. OpenAI-compatible
+   * clients (Open WebUI included) resend the full transcript on every turn but
+   * never a stable conversation id — the first user message is the one thing
+   * that stays constant across turns of the same chat, so it doubles as a
+   * best-effort continuity key when no id was supplied by the caller.
+   */
+  async findByFirstUserMessage(projectId: string, firstMessageContent: string) {
+    const candidates = await this.prisma.conversation.findMany({
+      where: { projectId },
+      orderBy: { updatedAt: 'desc' },
+      take: 50,
+      include: { messages: { orderBy: { createdAt: 'asc' }, take: 1 } },
+    });
+    return candidates.find(
+      (c) =>
+        c.messages[0]?.role === 'user' &&
+        c.messages[0]?.content === firstMessageContent,
+    );
+  }
+
   async create(projectId: string, title?: string) {
     return this.prisma.conversation.create({
       data: {

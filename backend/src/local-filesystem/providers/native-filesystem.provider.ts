@@ -60,11 +60,29 @@ export class NativeFilesystemProvider {
 
   async stat(resolvedPath: string, displayPath: string) {
     const stats = await fs.stat(resolvedPath);
+    const isDirectory = stats.isDirectory();
+
+    // For directories, `stats.size` is the filesystem's directory-entry size
+    // (often 0 or a fixed block size on Windows/NTFS) — it says nothing about
+    // whether the directory has contents. Without entryCount, a model has no
+    // real signal here and tends to guess/hallucinate "empty" from a small
+    // size value. Count immediate entries so "está vazio?" has a real answer.
+    let entryCount: number | undefined;
+    if (isDirectory) {
+      try {
+        const entries = await fs.readdir(resolvedPath);
+        entryCount = entries.length;
+      } catch {
+        entryCount = undefined;
+      }
+    }
+
     return {
       path: displayPath,
-      type: stats.isDirectory() ? 'directory' : 'file',
+      type: isDirectory ? 'directory' : 'file',
       size: stats.size,
       modifiedAt: stats.mtime.toISOString(),
+      ...(isDirectory ? { entryCount, isEmpty: entryCount === 0 } : {}),
     };
   }
 
